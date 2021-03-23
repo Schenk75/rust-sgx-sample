@@ -17,4 +17,12 @@ bin-release/
 # should NOT be excluded as they contain compiler settings and other important
 # information for Eclipse / Flash Builder.
 
-wasm-sample
+test_input
+target
+Cargo.lock
+*_t.*
+*_u.*
+*/lib/*.a
+*/bin/app
+enclave.so
+enclave.signed.so
