@@ -1,0 +1,21 @@
+[package]
+name = "app"
+version = "1.0.0"
+authors = ["The Teaclave Authors"]
+build = "build.rs"
+
+[dependencies]
+# sgx_types = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
+# sgx_urts = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
+sgx_types = { path = "../../../sgx_types" }
+sgx_urts = { path = "../../../sgx_urts" }
+lazy_static = { version = "1.1.0", features = ["spin_no_std"] }
+# enclave1 = { path = "../enclave1" }
+# enclave2 = { path = "../enclave2" }
+# enclave3 = { path = "../enclave3" }
+# attestation = { path = "../attestation" }
+
+# [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
+# sgx_types = { path = "../../../sgx_types" }
+# sgx_urts = { path = "../../../sgx_urts" }
+
