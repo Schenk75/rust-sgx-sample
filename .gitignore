@@ -20,9 +20,10 @@ bin-release/
 test_input
 target
 Cargo.lock
-*_t.*
+Cargo.lock
 *_u.*
+*_t.*
 */lib/*.a
 */bin/app
-enclave.so
+enclave*.so
 enclave.signed.so
