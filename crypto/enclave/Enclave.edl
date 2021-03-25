@@ -16,6 +16,8 @@
 // under the License.
 
 enclave {
+    include "sgx_tcrypto.h"
+
     from "sgx_tstd.edl" import *;
     from "sgx_stdio.edl" import *;
     from "sgx_backtrace.edl" import *;
@@ -49,6 +51,14 @@ enclave {
 
         public sgx_status_t rsa_key([in, size=len] const uint8_t* text, size_t len);
 
+        public sgx_status_t rsa_verify( [in] uint8_t hash[32], 
+                                        [in] sgx_rsa3072_public_key_t* pubkey, 
+                                        [in] sgx_rsa3072_signature_t* signature);
+
+        public sgx_status_t upload_pubkey([in] sgx_rsa3072_public_key_t* pubkey);
+
+        public sgx_status_t rsa_verify_without_key( [in] uint8_t hash[32],
+                                                    [in] sgx_rsa3072_signature_t* signature);
     };
 
     untrusted {

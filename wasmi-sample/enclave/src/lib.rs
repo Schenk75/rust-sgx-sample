@@ -48,6 +48,8 @@ extern crate serde_json;
 
 lazy_static!{
     static ref SPECDRIVER: SgxMutex<SpecDriver> = SgxMutex::new(SpecDriver::new());
+    // user pubkey: create by user, init by sgxwasm_init()
+    // secret key: used for authentication, should be created in enclave
 }
 
 #[no_mangle]

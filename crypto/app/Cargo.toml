@@ -9,6 +9,7 @@ build = "build.rs"
 # sgx_urts = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
 sgx_types = { path = "../../../sgx_types" }
 sgx_urts = { path = "../../../sgx_urts" }
+sgx_ucrypto = { path = "../../../sgx_ucrypto" }
 
 # [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 # sgx_types = { path = "../../../sgx_types" }

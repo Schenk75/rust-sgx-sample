@@ -17,8 +17,13 @@
 
 extern crate sgx_types;
 extern crate sgx_urts;
+extern crate sgx_ucrypto as crypto;
+
+use std::collections::HashMap;
+
 use sgx_types::*;
 use sgx_urts::SgxEnclave;
+use crypto::*;
 
 static ENCLAVE_FILE: &'static str = "enclave.signed.so";
 
@@ -29,6 +34,22 @@ extern {
         input_str: *const u8,
         some_len: usize,
         hash: &mut [u8;32]) -> sgx_status_t;
+    fn rsa_verify(
+        eid: sgx_enclave_id_t, 
+        retval: *mut sgx_status_t,
+        hash: &[u8;32], 
+        pubkey: &sgx_rsa3072_public_key_t, 
+        signature: &sgx_rsa3072_signature_t) -> sgx_status_t;
+    fn upload_pubkey(
+        eid: sgx_enclave_id_t, 
+        retval: *mut sgx_status_t,
+        pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t;
+    fn rsa_verify_without_key(
+        eid: sgx_enclave_id_t, 
+        retval: *mut sgx_status_t,
+        hash: &[u8;32],
+        signature: &sgx_rsa3072_signature_t) -> sgx_status_t;
+
     fn aes_gcm_128_encrypt(
         eid: sgx_enclave_id_t, 
         retval: *mut sgx_status_t,
@@ -78,7 +99,7 @@ fn init_enclave() -> SgxResult<SgxEnclave> {
 fn main() {
     let enclave = match init_enclave() {
         Ok(r) => {
-            println!("[+] Init Enclave Successful {}!", r.geteid());
+            println!("[+] Init Enclave Successful {}!\n", r.geteid());
             r
         },
         Err(x) => {
@@ -87,25 +108,184 @@ fn main() {
         },
     };
 
-    if sha_256(enclave.geteid()) == -1 {
-        println!("[-] sha_256 fail!");
+    let eid = enclave.geteid();
+
+    let wast_file = "../test_input/forward.wast";
+    let wast_content : String = std::fs::read_to_string(wast_file).unwrap();
+    let mut hash = [0_u8; 32];
+    // println!("{:?}", wast_content);
+    if sha_256(eid, wast_content, &mut hash) == -1 {
+        println!("[-] sha_256 function fail!");
+        enclave.destroy();
+        println!("\n[+] Destroy Enclave {}", eid);
+        return;
     }
-    if aes_gcm_128(enclave.geteid()) == -1 {
-        println!("[-] aes_gcm_128 fail!");
+    print!("[+] SHA256 result is ");
+    for i in 0..32 {
+        print!("{:02x}", hash[i]);
     }
-    if aes_cmac_u(enclave.geteid()) == -1 {
-        println!("[-] aes_cmac fail!");
-    }
-    if rsa(enclave.geteid()) == -1 {
-        println!("[-] rsa fail!");
+    println!("\n\n");
+
+    // create rsa3072 public key and private key
+    let mut pubkey = sgx_rsa3072_public_key_t {
+        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
+        exponent: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
+    };
+    let mut privkey = sgx_rsa3072_key_t {
+        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
+        d: [0_u8; SGX_RSA3072_PRI_EXP_SIZE],
+        e: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
+    };
+    if generate_rsa_keypair(&mut pubkey, &mut privkey) == -1 {
+        println!("[-] generate_rsa_keypair function fail!");
+        enclave.destroy();
+        println!("\n[+] Destroy Enclave {}", eid);
+        return;
+    } else {
+        println!("[+] create rsa key pair success!");
     }
     
+    // sign the sha256 hash by rsa3072 private key
+    let signature = match rsgx_rsa3072_sign_slice(&hash, &privkey) {
+        Ok(sig) => {sig},
+        Err(err) => {
+            println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
+            enclave.destroy();
+            println!("\n[+] Destroy Enclave {}", eid);
+            return;
+        }
+    };
+    // println!("signature: {:?}", signature.signature);
+
+    // upload rsa3072 public key to enclave
+    let mut retval = sgx_status_t::SGX_SUCCESS;
+    println!("\n+++++++++++ Enter Enclave +++++++++++");
+    let result = unsafe{
+        upload_pubkey(eid, &mut retval, &pubkey)
+    };
+    println!("----------- Leave Enclave -----------\n");
+    match result {
+        sgx_status_t::SGX_SUCCESS => {
+            println!("[+] upload_pubkey function success!");
+        },
+        _ => {
+            println!("[-] upload_pubkey function fail: {}", result.as_str());
+        }
+    };
+    
+    // enter enclave to verify the signature
+    println!("\n+++++++++++ Enter Enclave +++++++++++");
+    let result = unsafe{
+        rsa_verify_without_key(eid, &mut retval, &hash, &signature)
+        // rsa_verify(eid, &mut retval, &hash, &pubkey, &signature)
+    };
+    println!("----------- Leave Enclave -----------\n");
+    match result {
+        sgx_status_t::SGX_SUCCESS => {
+            println!("[+] signature verified success!");
+        },
+        sgx_status_t::SGX_ERROR_UNEXPECTED => {
+            println!("[-] signature verified fail!");
+        },
+        _ => {
+            println!("[-] rsa_verify function fail: {}", result.as_str());
+        }
+    };
+
+
+
+
+    // let input_str = "abc".to_string();
+    // if sha_256_test(enclave.geteid(), input_str) == -1 {
+    //     println!("[-] sha_256 fail!");
+    // }
+    // if aes_gcm_128(enclave.geteid()) == -1 {
+    //     println!("[-] aes_gcm_128 fail!");
+    // }
+    // if aes_cmac_u(enclave.geteid()) == -1 {
+    //     println!("[-] aes_cmac fail!");
+    // }
+    // if rsa_test(enclave.geteid()) == -1 {
+    //     println!("[-] rsa fail!");
+    // }
+    
     enclave.destroy();
+    println!("\n[+] Destroy Enclave {}", eid);
 }
 
-fn sha_256(eid: u64) -> i32 {
+
+
+fn sha_256(eid: sgx_enclave_id_t, input: String, hash: &mut [u8;32]) -> i32 {
     let mut retval = sgx_status_t::SGX_SUCCESS;
-    let input_str = "abc".to_string();
+    let len = input.len();
+
+    println!("\n+++++++++++ Enter Enclave +++++++++++");
+    let result = unsafe {
+        calc_sha256(
+            eid, 
+            &mut retval,
+            input.as_ptr() as *const u8,
+            len,
+            hash)
+    };
+    println!("----------- Leave Enclave -----------\n");
+
+    match result {
+        sgx_status_t::SGX_SUCCESS => {},
+        _ => {
+            println!("[-] ECALL Enclave Failed {}!", result.as_str());
+            return -1;
+        }
+    }
+    
+    println!("[+] calc_sha256 success ...");
+    0
+}
+
+fn generate_rsa_keypair(pubkey: &mut sgx_rsa3072_public_key_t, privkey: &mut sgx_rsa3072_key_t) -> i32 {
+    let mut n: [u8; SGX_RSA3072_KEY_SIZE] = [0; SGX_RSA3072_KEY_SIZE];   // 384
+    let mut e: [u8; SGX_RSA3072_PUB_EXP_SIZE] = [1, 0, 0, 1];   // 4
+    let mut d: [u8; SGX_RSA3072_PRI_EXP_SIZE] = [0; SGX_RSA3072_PRI_EXP_SIZE];   // 384
+    let mut p: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut q: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut dmp1: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut dmq1: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut iqmp: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    
+    match rsgx_create_rsa_key_pair(
+        384,
+        4,
+        &mut n,
+        &mut d,
+        &mut e,
+        &mut p,
+        &mut q,
+        &mut dmp1,
+        &mut dmq1,
+        &mut iqmp)
+        {
+            Err(err) => {
+                println!("[-] rsgx_create_rsa_key_pair function fail: {}", err.as_str());
+                return -1;
+            },
+            Ok(()) => {}
+        };
+
+    pubkey.modulus = n;
+    pubkey.exponent = e;
+
+    privkey.modulus = n;
+    privkey.e = e;
+    privkey.d = d;
+    0
+}
+
+
+
+
+
+fn sha_256_test(eid: u64, input_str: String) -> i32 {
+    let mut retval = sgx_status_t::SGX_SUCCESS;
     let len = input_str.len();
     let mut hash = [0_u8; 32];
     println!("[+] sha256 input string is {}", input_str);
@@ -262,7 +442,7 @@ fn aes_cmac_u(eid: u64) -> i32 {
     0
 }
 
-fn rsa(eid: u64) -> i32 {
+fn rsa_test(eid: u64) -> i32 {
     let mut retval = sgx_status_t::SGX_SUCCESS;
     let rsa_msg: [u8; 128] = [
         0x6b, 0xc1, 0xbe, 0xe2, 0x2e, 0x40, 0x9f, 0x96,
@@ -283,7 +463,7 @@ fn rsa(eid: u64) -> i32 {
         0xad, 0x2b, 0x41, 0x7b, 0xe6, 0x6c, 0x37, 0x10
     ];
 
-    println!("*********** Enter Enclave");
+    println!("*********** Enter Enclave ***********");
     let result = unsafe {
         rsa_key(
             eid, 
@@ -291,7 +471,7 @@ fn rsa(eid: u64) -> i32 {
             rsa_msg.as_ptr() as *const u8, 
             rsa_msg.len())
     };
-    println!("*********** Leave Enclave");
+    println!("*********** Leave Enclave ***********");
     match result {
         sgx_status_t::SGX_SUCCESS => {},
         _ => {

@@ -27,13 +27,78 @@ extern crate sgx_trts;
 #[cfg(not(target_env = "sgx"))]
 #[macro_use]
 extern crate sgx_tstd as std;
+#[macro_use]
+extern crate lazy_static;
 
 use sgx_types::*;
 use sgx_tcrypto::*;
 use sgx_trts::memeq::ConsttimeMemEq;
-use std::vec::Vec;
+use std::{collections::HashMap, vec::Vec};
 use std::slice;
+use std::string::String;
 use std::ptr;
+use std::sync::SgxMutex;
+
+lazy_static!{
+    // store public key given by client
+    // 
+    static ref PUBLIC_KEY: SgxMutex<HashMap<u32, sgx_rsa3072_public_key_t>> = SgxMutex::new(HashMap::new());
+}
+
+/// A Ecall to upload a rsa public key
+/// consider to use auto increment key in the map
+#[no_mangle]
+pub extern "C" fn upload_pubkey(pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t {
+    PUBLIC_KEY.lock().unwrap().insert(1, *pubkey);
+    println!("[+] upload pubkey success!");
+    sgx_status_t::SGX_SUCCESS
+}
+
+/// A Ecall function to verify a signature by rsa3072 using public key stored in enclave
+#[no_mangle]
+pub extern "C" fn rsa_verify_without_key(
+    hash: &[u8;32], 
+    signature: &sgx_rsa3072_signature_t) -> sgx_status_t {
+    let pubkey = PUBLIC_KEY.lock().unwrap().get(&1).unwrap().clone();
+
+    match rsgx_rsa3072_verify_slice(hash, &pubkey, signature) {
+        Ok(flag) => {
+            if flag {
+                println!("[+] verify signature success!");
+                sgx_status_t::SGX_SUCCESS
+            } else {
+                println!("[-] verify signature fail!");
+                sgx_status_t::SGX_ERROR_UNEXPECTED
+            }
+        },
+        Err(err) => {
+            println!("[-] rsgx_rsa3072_verify_slice function fail: {}", err.as_str());
+            err
+        }
+    }
+}
+
+/// A Ecall function to verify a signature by rsa3072
+#[no_mangle]
+pub extern "C" fn rsa_verify(hash: &[u8;32], 
+                            pubkey: &sgx_rsa3072_public_key_t, 
+                            signature: &sgx_rsa3072_signature_t) -> sgx_status_t {
+    match rsgx_rsa3072_verify_slice(hash, pubkey, signature) {
+        Ok(flag) => {
+            if flag {
+                println!("[+] verify signature success!");
+                sgx_status_t::SGX_SUCCESS
+            } else {
+                println!("[-] verify signature fail!");
+                sgx_status_t::SGX_ERROR_UNEXPECTED
+            }
+        },
+        Err(err) => {
+            println!("[-] rsgx_rsa3072_verify_slice function fail: {}", err.as_str());
+            err
+        }
+    }
+}
 
 /// A Ecall function takes a string and output its SHA256 digest.
 ///
@@ -92,6 +157,8 @@ pub extern "C" fn calc_sha256(input_str: *const u8,
 
     sgx_status_t::SGX_SUCCESS
 }
+
+
 
 /// An AES-GCM-128 encrypt function sample.
 ///
@@ -346,7 +413,6 @@ pub extern "C" fn aes_cmac(text: *const u8,
     sgx_status_t::SGX_SUCCESS
 }
 
-
 #[no_mangle]
 pub extern "C" fn rsa_key(text: * const u8, text_len: usize) -> sgx_status_t {
 
@@ -356,60 +422,17 @@ pub extern "C" fn rsa_key(text: * const u8, text_len: usize) -> sgx_status_t {
         return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
     }
 
-    let mod_size: i32 = 256;
-    let exp_size: i32 = 4;
-    let mut n: Vec<u8> = vec![0_u8; mod_size as usize];
-    let mut d: Vec<u8> = vec![0_u8; mod_size as usize];
-    let mut e: Vec<u8> = vec![1, 0, 1, 0];
-    let mut p: Vec<u8> = vec![0_u8; mod_size as usize / 2];
-    let mut q: Vec<u8> = vec![0_u8; mod_size as usize / 2];
-    let mut dmp1: Vec<u8> = vec![0_u8; mod_size as usize / 2];
-    let mut dmq1: Vec<u8> = vec![0_u8; mod_size as usize / 2];
-    let mut iqmp: Vec<u8> = vec![0_u8; mod_size as usize / 2];
-
-    let result = rsgx_create_rsa_key_pair(mod_size,
-                                          exp_size,
-                                          n.as_mut_slice(),
-                                          d.as_mut_slice(),
-                                          e.as_mut_slice(),
-                                          p.as_mut_slice(),
-                                          q.as_mut_slice(),
-                                          dmp1.as_mut_slice(),
-                                          dmq1.as_mut_slice(),
-                                          iqmp.as_mut_slice());
-
+    let mut privkey = SgxRsaPrivKey::new();
+    let mut pubkey = SgxRsaPubKey::new();
+    let result = rsa_key_generate(&mut pubkey, &mut privkey);
     match result {
-        Err(x) => {
-            return x;
-        },
-        Ok(()) => {},
+        sgx_status_t::SGX_SUCCESS => {},
+        _ => {
+            println!("[-] rsa_key_generate failed! {}", result.as_str());
+            return result;
+        }
     }
-
-    let privkey = SgxRsaPrivKey::new();
-    let pubkey = SgxRsaPubKey::new();
-
-    let result = pubkey.create(mod_size,
-                               exp_size,
-                               n.as_slice(),
-                               e.as_slice());
-    match result {
-        Err(x) => return x,
-        Ok(()) => {},
-    };
-
-    let result = privkey.create(mod_size,
-                                exp_size,
-                                e.as_slice(),
-                                p.as_slice(),
-                                q.as_slice(),
-                                dmp1.as_slice(),
-                                dmq1.as_slice(),
-                                iqmp.as_slice());
-    match result {
-        Err(x) => return x,
-        Ok(()) => {},
-    };
-
+    
     let mut ciphertext: Vec<u8> = vec![0_u8; 256];
     let mut chipertext_len: usize = ciphertext.len();
     let ret = pubkey.encrypt_sha256(ciphertext.as_mut_slice(),
@@ -441,6 +464,69 @@ pub extern "C" fn rsa_key(text: * const u8, text_len: usize) -> sgx_status_t {
     if plaintext[..plaintext_len].consttime_memeq(text_slice) == false {
         return sgx_status_t::SGX_ERROR_UNEXPECTED;
     }
+
+    sgx_status_t::SGX_SUCCESS
+}
+
+fn rsa_key_generate(pubkey: &mut SgxRsaPubKey, privkey: &mut SgxRsaPrivKey) -> sgx_status_t {
+    let mod_size: i32 = 256;
+    let exp_size: i32 = 4;
+    let mut n: Vec<u8> = vec![0_u8; mod_size as usize];
+    let mut d: Vec<u8> = vec![0_u8; mod_size as usize];
+    let mut e: Vec<u8> = vec![1, 0, 1, 0];
+    let mut p: Vec<u8> = vec![0_u8; mod_size as usize / 2];
+    let mut q: Vec<u8> = vec![0_u8; mod_size as usize / 2];
+    let mut dmp1: Vec<u8> = vec![0_u8; mod_size as usize / 2];
+    let mut dmq1: Vec<u8> = vec![0_u8; mod_size as usize / 2];
+    let mut iqmp: Vec<u8> = vec![0_u8; mod_size as usize / 2];
+
+    let result = rsgx_create_rsa_key_pair(mod_size,
+                                          exp_size,
+                                          n.as_mut_slice(),
+                                          d.as_mut_slice(),
+                                          e.as_mut_slice(),
+                                          p.as_mut_slice(),
+                                          q.as_mut_slice(),
+                                          dmp1.as_mut_slice(),
+                                          dmq1.as_mut_slice(),
+                                          iqmp.as_mut_slice());
+
+    match result {
+        Err(x) => {
+            return x;
+        },
+        Ok(()) => {},
+    }
+    // println!("n: {:?}", n);
+    // println!("d: {:?}", d);
+    // println!("e: {:?}", e);
+    // println!("p: {:?}", p);
+    // println!("q: {:?}", q);
+    // println!("dmp1: {:?}", dmp1);
+    // println!("dmq1: {:?}", dmq1);
+    // println!("iqmp: {:?}", iqmp);
+    
+    let result = pubkey.create(mod_size,
+                               exp_size,
+                               n.as_slice(),
+                               e.as_slice());
+    match result {
+        Err(x) => return x,
+        Ok(()) => {},
+    };
+
+    let result = privkey.create(mod_size,
+                                exp_size,
+                                e.as_slice(),
+                                p.as_slice(),
+                                q.as_slice(),
+                                dmp1.as_slice(),
+                                dmq1.as_slice(),
+                                iqmp.as_slice());
+    match result {
+        Err(x) => return x,
+        Ok(()) => {},
+    };
 
     sgx_status_t::SGX_SUCCESS
 }

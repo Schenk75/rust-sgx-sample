@@ -600,7 +600,7 @@ fn main() {
         // "../test_input/memory_redundancy.wast",
         // "../test_input/block.wast",
         // "../test_input/utf8-invalid-encoding.wast",
-        "../test_input/left-to-right.wast",
+        // "../test_input/left-to-right.wast",
         "../test_input/forward.wast",
         // "../test_input/typecheck.wast",
         // "../test_input/store_retval.wast",
