@@ -19,8 +19,6 @@ extern crate sgx_types;
 extern crate sgx_urts;
 extern crate sgx_ucrypto as crypto;
 
-use std::collections::HashMap;
-
 use sgx_types::*;
 use sgx_urts::SgxEnclave;
 use crypto::*;
