@@ -36,7 +36,7 @@ extern crate serde_derive;
 
 static ENCLAVE_FILE: &'static str = "enclave.signed.so";
 
-static MAXOUTPUT:usize = 4096;
+static MAXOUTPUT: usize = 4096;
 
 extern {
     fn sgxwasm_init(eid: sgx_enclave_id_t, retval: *mut sgx_status_t) -> sgx_status_t ;
@@ -44,6 +44,7 @@ extern {
                           req_bin : *const u8, req_len: usize,
                           result_bin : *mut u8,
                           result_max_len : usize ) -> sgx_status_t;
+    fn examine_module(eid: sgx_enclave_id_t, retval: *mut sgx_status_t);
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -174,6 +175,7 @@ fn sgx_enclave_wasm_invoke(req_str : String,
                            result_max_len : usize,
                            enclave : &SgxEnclave) -> (Result<Option<BoundaryValue>, InterpreterError>, sgx_status_t) {
     let enclave_id = enclave.geteid();
+    println!("req_str: {}", &req_str);
     let mut ret_val = sgx_status_t::SGX_SUCCESS;
     let     req_bin = req_str.as_ptr() as * const u8;
     let     req_len = req_str.len();
@@ -375,9 +377,10 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
 
     // ScriptParser interface has changed. Need to feed it with wast content.
     let wast_content : Vec<u8> = std::fs::read(wast_file).unwrap();
+    // println!("{:?}", wast_content);
     let path = std::path::Path::new(wast_file);
     let fnme = path.file_name().unwrap().to_str().unwrap();
-    println!("{}", fnme);
+    // println!("{}", fnme);
     let mut parser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
 
     sgx_enclave_wasm_init(enclave)?;
@@ -391,11 +394,14 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
 
         match kind {
             CommandKind::Module { name, module, .. } => {
+                // println!("module: {:?}", &module);
+                // let name = Some(String::from("test"));
                 sgx_enclave_wasm_load_module (module.into_vec(), &name, enclave)?;
                 println!("load module - success at line {}", line)
             },
 
             CommandKind::AssertReturn { action, expected } => {
+                // println!("expected: {:?}", &expected);
                 let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
                 match result {
                     Ok(result) => {
@@ -510,18 +516,23 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             },
         }
     }
-    println!("[+] all tests passed!");
+    println!("[+] all tests passed!\n");
     Ok(())
 }
 
 fn run_a_wast(enclave   : &SgxEnclave,
               wast_file : &str) -> Result<(), String> {
+    let mut retval = sgx_status_t::SGX_SUCCESS;
 
     // Step 1: Init the sgxwasm spec driver engine
     sgx_enclave_wasm_init(enclave)?;
+    // examine the modules in enclave
+    unsafe {examine_module(enclave.geteid(), &mut retval);}
 
     // Step 2: Load the wast file and run
     wasm_main_loop(wast_file, enclave)?;
+    // examine the modules in enclave
+    unsafe {examine_module(enclave.geteid(), &mut retval);}
 
     Ok(())
 }
@@ -597,7 +608,7 @@ fn main() {
         // "../test_input/skip-stack-guard-page.wast",
         // "../test_input/names.wast",
         // "../test_input/address.wast",
-        // "../test_input/memory_redundancy.wast",
+        "../test_input/memory_redundancy.wast",
         // "../test_input/block.wast",
         // "../test_input/utf8-invalid-encoding.wast",
         // "../test_input/left-to-right.wast",
@@ -620,7 +631,7 @@ fn main() {
     }
 
     enclave.destroy();
-    println!("[+] run_wasm success...");
+    println!("\n[+] run_wasm success...");
 
     return;
 }

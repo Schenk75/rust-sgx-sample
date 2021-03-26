@@ -49,7 +49,6 @@ extern crate serde_json;
 lazy_static!{
     static ref SPECDRIVER: SgxMutex<SpecDriver> = SgxMutex::new(SpecDriver::new());
     // user pubkey: create by user, init by sgxwasm_init()
-    // secret key: used for authentication, should be created in enclave
 }
 
 #[no_mangle]
@@ -138,7 +137,6 @@ fn wasm_register(name: &Option<String>, as_name: String)
 pub extern "C"
 fn sgxwasm_run_action(req_bin : *const u8, req_length: usize,
                       result_bin : *mut u8, result_max_len: usize) -> sgx_status_t {
-
     let req_slice = unsafe { slice::from_raw_parts(req_bin, req_length) };
     let action_req: sgxwasm::SgxWasmAction = serde_json::from_slice(req_slice).unwrap();
 
@@ -229,3 +227,12 @@ fn sgxwasm_run_action(req_bin : *const u8, req_length: usize,
     }
 }
 
+
+/// take a look at the module instances in the driver
+#[no_mangle]
+pub extern "C" fn examine_module() {
+    println!("----------------------------------------------------------------------------------");
+    println!("SPECDRIVER module instances: {:?}", SPECDRIVER.lock().unwrap().get_instances());
+    println!("SPECDRIVER last module: {:?}", SPECDRIVER.lock().unwrap().get_last_module());
+    println!("----------------------------------------------------------------------------------");
+}

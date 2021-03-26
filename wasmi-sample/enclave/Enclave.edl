@@ -28,5 +28,6 @@ enclave {
                                                            size_t req_len,
                                                [out, size=out_max_len] uint8_t* output_bin,
                                                            size_t out_max_len);
+        public void examine_module();
     };
 };

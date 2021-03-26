@@ -289,6 +289,14 @@ impl SpecDriver {
         }
     }
 
+    pub fn get_instances(&self) -> &HashMap<String, ModuleRef> {
+        &self.instances
+    }
+
+    pub fn get_last_module(&self) -> &Option<ModuleRef> {
+        &self.last_module
+    }
+
     pub fn spec_module(&mut self) -> &mut SpecModule {
         &mut self.spec_module
     }
