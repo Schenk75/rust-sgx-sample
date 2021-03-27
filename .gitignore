@@ -24,6 +24,7 @@ Cargo.lock
 *_u.*
 *_t.*
 */lib/*.a
+libenclave.a
 */bin/app
 enclave*.so
 enclave.signed.so
