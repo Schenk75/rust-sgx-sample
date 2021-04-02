@@ -299,10 +299,10 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     // (1) get ti + eg
     let mut ti : sgx_target_info_t = sgx_target_info_t::default();
     let mut eg : sgx_epid_group_id_t = sgx_epid_group_id_t::default();
-    let mut rt : sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
+    let mut retval : sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
 
     let res = unsafe {
-        ocall_sgx_init_quote(&mut rt as *mut sgx_status_t,
+        ocall_sgx_init_quote(&mut retval as *mut sgx_status_t,
                              &mut ti as *mut sgx_target_info_t,
                              &mut eg as *mut sgx_epid_group_id_t)
     };
@@ -313,8 +313,8 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(res);
     }
 
-    if rt != sgx_status_t::SGX_SUCCESS {
-        return Err(rt);
+    if retval != sgx_status_t::SGX_SUCCESS {
+        return Err(retval);
     }
 
     let eg_num = as_u32_le(&eg);
@@ -323,7 +323,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     let mut ias_sock : i32 = 0;
 
     let res = unsafe {
-        ocall_get_ias_socket(&mut rt as *mut sgx_status_t,
+        ocall_get_ias_socket(&mut retval as *mut sgx_status_t,
                              &mut ias_sock as *mut i32)
     };
 
@@ -400,7 +400,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     let p_quote_len = &mut quote_len as *mut u32;
 
     let result = unsafe {
-        ocall_get_quote(&mut rt as *mut sgx_status_t,
+        ocall_get_quote(&mut retval as *mut sgx_status_t,
                 p_sigrl,
                 sigrl_len,
                 p_report,
@@ -417,9 +417,9 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(result);
     }
 
-    if rt != sgx_status_t::SGX_SUCCESS {
+    if retval != sgx_status_t::SGX_SUCCESS {
         println!("ocall_get_quote returned {}", rt);
-        return Err(rt);
+        return Err(retval);
     }
 
     // Added 09-28-2018
@@ -448,6 +448,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     // }
     // println!("");
 
+    
     // Check qe_report to defend against replay attack
     // The purpose of p_qe_report is for the ISV enclave to confirm the QUOTE
     // it received is not modified by the untrusted SW stack, and not a replay.
@@ -472,7 +473,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
 
     let quote_vec : Vec<u8> = return_quote_buf[..quote_len as usize].to_vec();
     let res = unsafe {
-        ocall_get_ias_socket(&mut rt as *mut sgx_status_t,
+        ocall_get_ias_socket(&mut retval as *mut sgx_status_t,
                              &mut ias_sock as *mut i32)
     };
 
@@ -480,8 +481,8 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(res);
     }
 
-    if rt != sgx_status_t::SGX_SUCCESS {
-        return Err(rt);
+    if retval != sgx_status_t::SGX_SUCCESS {
+        return Err(retval);
     }
 
     let (attn_report, sig, cert) = get_report_from_intel(ias_sock, quote_vec);

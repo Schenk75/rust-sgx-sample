@@ -383,7 +383,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
     // println!("{}", fnme);
     let mut parser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
 
-    sgx_enclave_wasm_init(enclave)?;
+    // sgx_enclave_wasm_init(enclave)?;
     while let Some(Command{kind,line}) =
             match parser.next() {
                 Ok(x) => x,
@@ -525,7 +525,9 @@ fn run_a_wast(enclave   : &SgxEnclave,
     let mut retval = sgx_status_t::SGX_SUCCESS;
 
     // Step 1: Init the sgxwasm spec driver engine
-    sgx_enclave_wasm_init(enclave)?;
+    // move it out of the loop
+    // sgx_enclave_wasm_init(enclave)?;
+
     // examine the modules in enclave
     unsafe {examine_module(enclave.geteid(), &mut retval);}
 
@@ -623,7 +625,17 @@ fn main() {
         // "../test_input/token.wast",
         // "../test_input/data.wast",
         // "../test_input/utf8-custom-section-id.wast",
-        ];
+    ];
+    
+    // Init the sgxwasm spec driver engine
+    match sgx_enclave_wasm_init(&enclave) {
+        Ok(()) => {
+            println!("[+] Sgxwasm Spec Driver Engine Init Success!")
+        },
+        Err(x) => {
+            println!("{}", x);
+        }
+    }
 
     for wfile in wast_list {
         println!("======================= testing {} =====================", wfile);
