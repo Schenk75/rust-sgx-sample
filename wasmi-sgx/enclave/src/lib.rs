@@ -22,6 +22,7 @@
 #![cfg_attr(target_env = "sgx", feature(rustc_private))]
 
 extern crate sgx_types;
+extern crate sgx_tcrypto;
 #[cfg(not(target_env = "sgx"))]
 #[macro_use]
 extern crate sgx_tstd as std;
@@ -39,7 +40,9 @@ extern crate sgxwasm;
 use sgxwasm::{SpecDriver, boundary_value_to_runtime_value, result_covert};
 
 use sgx_types::*;
+use sgx_tcrypto::*;
 use std::slice;
+use std::collections::HashMap;
 
 use wasmi::{ModuleInstance, ImportsBuilder, RuntimeValue, Error as InterpreterError, Module};
 
@@ -48,7 +51,10 @@ extern crate serde_json;
 
 lazy_static!{
     static ref SPECDRIVER: SgxMutex<SpecDriver> = SgxMutex::new(SpecDriver::new());
-    // user pubkey: create by user, init by sgxwasm_init()
+    // store owner's key pair
+    // static ref PRIVATE_KEY: SgxMutex<HashMap<u32, sgx_rsa3072_key_t>> = SgxMutex::new(HashMap::new());
+    static ref PRIVATE_KEY: SgxMutex<sgx_rsa3072_key_t> = SgxMutex::new(sgx_rsa3072_key_t::default());
+    static ref PUBLIC_KEY: SgxMutex<sgx_rsa3072_public_key_t> = SgxMutex::new(sgx_rsa3072_public_key_t::default());
 }
 
 #[no_mangle]
@@ -133,10 +139,45 @@ fn wasm_register(name: &Option<String>, as_name: String)
     spec_driver.register(name, as_name)
 }
 
+fn rsa_verify(hash: &[u8;32], pubkey: &sgx_rsa3072_public_key_t, signature: &sgx_rsa3072_signature_t) -> sgx_status_t {
+    match rsgx_rsa3072_verify_slice(hash, pubkey, signature) {
+        Ok(flag) => {
+            if flag {
+                // println!("[+] verify signature success!");
+                sgx_status_t::SGX_SUCCESS
+            } else {
+                // println!("[-] verify signature fail!");
+                sgx_status_t::SGX_ERROR_UNEXPECTED
+            }
+        },
+        Err(err) => {
+            // println!("[-] rsgx_rsa3072_verify_slice function fail: {}", err.as_str());
+            err
+        }
+    }
+}
+
 #[no_mangle]
 pub extern "C"
-fn sgxwasm_run_action(req_bin : *const u8, req_length: usize,
+fn sgxwasm_run_action(hash: &[u8; 32], signature: &sgx_rsa3072_signature_t,
+                      req_bin : *const u8, req_length: usize,
                       result_bin : *mut u8, result_max_len: usize) -> sgx_status_t {
+    let pubkey = PUBLIC_KEY.lock().unwrap().clone();
+    let result = rsa_verify(hash, &pubkey, signature);
+    match result {
+        sgx_status_t::SGX_SUCCESS => {
+            println!("[+] signature verified success!");
+        },
+        sgx_status_t::SGX_ERROR_UNEXPECTED => {
+            println!("[-] signature verified fail!");
+            return sgx_status_t::SGX_ERROR_UNEXPECTED;
+        },
+        _ => {
+            println!("[-] rsa_verify function fail: {}", result.as_str());
+            return result;
+        }
+    };
+
     let req_slice = unsafe { slice::from_raw_parts(req_bin, req_length) };
     let action_req: sgxwasm::SgxWasmAction = serde_json::from_slice(req_slice).unwrap();
 
@@ -235,4 +276,17 @@ pub extern "C" fn examine_module() {
     println!("SPECDRIVER module instances: {:?}", SPECDRIVER.lock().unwrap().get_instances());
     println!("SPECDRIVER last module: {:?}", SPECDRIVER.lock().unwrap().get_last_module());
     println!("----------------------------------------------------------------------------------");
+}
+
+
+/// upload key pair
+#[no_mangle]
+pub extern "C" fn upload_key(privkey: &sgx_rsa3072_key_t, pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t {
+    let mut k = PRIVATE_KEY.lock().unwrap();
+    *k = *privkey;
+    let mut k = PUBLIC_KEY.lock().unwrap();
+    *k = *pubkey;
+    // PRIVATE_KEY.lock().unwrap().insert(1, *privkey);
+    println!("[+] upload key pair success!");
+    sgx_status_t::SGX_SUCCESS
 }

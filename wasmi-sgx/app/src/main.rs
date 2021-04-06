@@ -17,12 +17,14 @@
 
 extern crate sgx_types;
 extern crate sgx_urts;
+extern crate sgx_ucrypto as crypto;
 
 extern crate nan_preserving_float;
 extern crate wabt;
 
 use sgx_types::*;
 use sgx_urts::SgxEnclave;
+use crypto::*;
 
 mod wasm_def;
 
@@ -41,10 +43,17 @@ static MAXOUTPUT: usize = 4096;
 extern {
     fn sgxwasm_init(eid: sgx_enclave_id_t, retval: *mut sgx_status_t) -> sgx_status_t ;
     fn sgxwasm_run_action(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
+                          hash: &[u8; 32],
+                          signature: &sgx_rsa3072_signature_t,
                           req_bin : *const u8, req_len: usize,
                           result_bin : *mut u8,
                           result_max_len : usize ) -> sgx_status_t;
     fn examine_module(eid: sgx_enclave_id_t, retval: *mut sgx_status_t);
+    fn upload_key(
+        eid: sgx_enclave_id_t,
+        retval: *mut sgx_status_t,
+        privkey: &sgx_rsa3072_key_t,
+        pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -173,9 +182,21 @@ fn sgx_enclave_wasm_init(enclave : &SgxEnclave) -> Result<(),String> {
 
 fn sgx_enclave_wasm_invoke(req_str : String,
                            result_max_len : usize,
+                           privkey: &sgx_rsa3072_key_t,
                            enclave : &SgxEnclave) -> (Result<Option<BoundaryValue>, InterpreterError>, sgx_status_t) {
     let enclave_id = enclave.geteid();
     println!("req_str: {}", &req_str);
+
+    let hash = sha256_u(req_str.as_str());
+    // sign the sha256 hash by rsa3072 private key
+    let signature = match rsgx_rsa3072_sign_slice(&hash, privkey) {
+        Ok(sig) => {sig},
+        Err(err) => {
+            println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
+            panic!("sgx_enclave_wasm_invoke sign msg error!");
+        }
+    };
+
     let mut ret_val = sgx_status_t::SGX_SUCCESS;
     let     req_bin = req_str.as_ptr() as * const u8;
     let     req_len = req_str.len();
@@ -185,6 +206,9 @@ fn sgx_enclave_wasm_invoke(req_str : String,
 
     let sgx_ret = unsafe{sgxwasm_run_action(enclave_id,
                                      &mut ret_val,
+                                    //  &[0_u8; 32],
+                                     &hash,
+                                     &signature,
                                      req_bin,
                                      req_len,
                                      result_slice.as_mut_ptr(),
@@ -229,6 +253,7 @@ fn sgx_enclave_wasm_invoke(req_str : String,
 
 fn sgx_enclave_wasm_load_module(module : Vec<u8>,
                                 name   : &Option<String>,
+                                privkey: &sgx_rsa3072_key_t,
                                 enclave : &SgxEnclave)
                                 -> Result<(), String> {
 
@@ -240,6 +265,7 @@ fn sgx_enclave_wasm_load_module(module : Vec<u8>,
 
     match sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
                                   MAXOUTPUT,
+                                  privkey,
                                   enclave) {
         (_, sgx_status_t::SGX_SUCCESS) => {
             Ok(())
@@ -255,7 +281,7 @@ fn sgx_enclave_wasm_load_module(module : Vec<u8>,
 }
 
 
-fn sgx_enclave_wasm_run_action(action : &Action, enclave : &SgxEnclave) -> Result<Option<RuntimeValue>, InterpreterError> {
+fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<Option<RuntimeValue>, InterpreterError> {
     match action {
         &Action::Invoke {
             ref module,
@@ -273,6 +299,7 @@ fn sgx_enclave_wasm_run_action(action : &Action, enclave : &SgxEnclave) -> Resul
             };
             let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
                                                  MAXOUTPUT,
+                                                 privkey,
                                                  enclave);
             match result {
                 (result, sgx_status_t::SGX_SUCCESS) => {
@@ -302,6 +329,7 @@ fn sgx_enclave_wasm_run_action(action : &Action, enclave : &SgxEnclave) -> Resul
             };
             let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
                                                  MAXOUTPUT,
+                                                 privkey,
                                                  enclave);
 
             match result {
@@ -322,7 +350,7 @@ fn sgx_enclave_wasm_run_action(action : &Action, enclave : &SgxEnclave) -> Resul
 }
 
 // Malform
-fn sgx_enclave_wasm_try_load(module : &[u8], enclave : &SgxEnclave) -> Result<(), InterpreterError> {
+fn sgx_enclave_wasm_try_load(module : &[u8], privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<(), InterpreterError> {
     // Make a SgxWasmAction::TryLoad structure and send it to sgx_enclave_wasm_invoke
     let req = SgxWasmAction::TryLoad {
         module : module.to_vec(),
@@ -330,6 +358,7 @@ fn sgx_enclave_wasm_try_load(module : &[u8], enclave : &SgxEnclave) -> Result<()
 
     let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
                                          MAXOUTPUT,
+                                         privkey,
                                          enclave);
     match result {
         (_, sgx_status_t::SGX_SUCCESS) => {
@@ -348,6 +377,7 @@ fn sgx_enclave_wasm_try_load(module : &[u8], enclave : &SgxEnclave) -> Result<()
 // Register
 fn sgx_enclave_wasm_register(name : Option<String>,
                              as_name : String,
+                             privkey: &sgx_rsa3072_key_t,
                              enclave : &SgxEnclave) -> Result<(), InterpreterError> {
     // Make a SgxWasmAction::Register structure and send it to sgx_enclave_wasm_invoke
     let req = SgxWasmAction::Register{
@@ -357,6 +387,7 @@ fn sgx_enclave_wasm_register(name : Option<String>,
 
     let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
                                          MAXOUTPUT,
+                                         privkey,
                                          enclave);
 
     match result {
@@ -373,10 +404,14 @@ fn sgx_enclave_wasm_register(name : Option<String>,
     }
 }
 
-fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String> {
+fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<(), String> {
 
     // ScriptParser interface has changed. Need to feed it with wast content.
-    let wast_content : Vec<u8> = std::fs::read(wast_file).unwrap();
+    let wast_content = match std::fs::read(wast_file) {
+        Ok(content) => content,
+        Err(x) => return Err(x.to_string())
+    };
+    // let wast_content : Vec<u8> = std::fs::read(wast_file).unwrap();
     // println!("{:?}", wast_content);
     let path = std::path::Path::new(wast_file);
     let fnme = path.file_name().unwrap().to_str().unwrap();
@@ -396,13 +431,13 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             CommandKind::Module { name, module, .. } => {
                 // println!("module: {:?}", &module);
                 // let name = Some(String::from("test"));
-                sgx_enclave_wasm_load_module (module.into_vec(), &name, enclave)?;
+                sgx_enclave_wasm_load_module (module.into_vec(), &name, privkey, enclave)?;
                 println!("load module - success at line {}", line)
             },
 
             CommandKind::AssertReturn { action, expected } => {
                 // println!("expected: {:?}", &expected);
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
                 match result {
                     Ok(result) => {
                         let spec_expected = expected.iter()
@@ -435,7 +470,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
 
             CommandKind::AssertReturnCanonicalNan { action }
             | CommandKind::AssertReturnArithmeticNan { action } => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
                 match result {
                     Ok(result) => {
                         for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
@@ -460,7 +495,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             },
 
             CommandKind::AssertExhaustion { action, .. } => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
                 match result {
                     Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
                     Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
@@ -469,7 +504,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
 
             CommandKind::AssertTrap { action, .. } => {
                 println!("Enter AssertTrap!");
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
                 match result {
                     Ok(result) => {
                         panic!("Expected action to result in a trap, got result: {:?}", result);
@@ -484,7 +519,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             | CommandKind::AssertMalformed { module, .. }
             | CommandKind::AssertUnlinkable { module, .. } => {
                 // Malformed
-                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), enclave);
+                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey, enclave);
                 match module_load {
                     Ok(_) => panic!("Expected invalid module definition, got some module!"),
                     Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
@@ -492,7 +527,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             },
 
             CommandKind::AssertUninstantiable { module, .. } => {
-                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), enclave);
+                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey,  enclave);
                 match module_load {
                     Ok(_) => panic!("Expected error running start function at line {}", line),
                     Err(e) => println!("assert_uninstantiable - success ({:?})", e),
@@ -500,7 +535,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             },
 
             CommandKind::Register { name, as_name, .. } => {
-                let result = sgx_enclave_wasm_register(name, as_name, enclave);
+                let result = sgx_enclave_wasm_register(name, as_name, privkey, enclave);
                 match result {
                     Ok(_) => {println!("register - success at line {}", line)},
                     Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
@@ -508,7 +543,7 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
             },
 
             CommandKind::PerformAction(action) => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
                 match result {
                     Ok(_) => {println!("invoke - success at line {}", line)},
                     Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
@@ -521,22 +556,69 @@ fn wasm_main_loop(wast_file : &str, enclave : &SgxEnclave) -> Result<(), String>
 }
 
 fn run_a_wast(enclave   : &SgxEnclave,
-              wast_file : &str) -> Result<(), String> {
+              wast_file : &str,
+              privkey: &sgx_rsa3072_key_t) -> Result<(), String> {
     let mut retval = sgx_status_t::SGX_SUCCESS;
 
     // Step 1: Init the sgxwasm spec driver engine
     // move it out of the loop
     // sgx_enclave_wasm_init(enclave)?;
 
-    // examine the modules in enclave
-    unsafe {examine_module(enclave.geteid(), &mut retval);}
-
     // Step 2: Load the wast file and run
-    wasm_main_loop(wast_file, enclave)?;
+    wasm_main_loop(wast_file, privkey, enclave)?;
     // examine the modules in enclave
     unsafe {examine_module(enclave.geteid(), &mut retval);}
 
     Ok(())
+}
+
+fn generate_rsa_keypair(pubkey: &mut sgx_rsa3072_public_key_t, privkey: &mut sgx_rsa3072_key_t) -> i32 {
+    let mut n: [u8; SGX_RSA3072_KEY_SIZE] = [0; SGX_RSA3072_KEY_SIZE];   // 384
+    let mut e: [u8; SGX_RSA3072_PUB_EXP_SIZE] = [1, 0, 0, 1];   // 4
+    let mut d: [u8; SGX_RSA3072_PRI_EXP_SIZE] = [0; SGX_RSA3072_PRI_EXP_SIZE];   // 384
+    let mut p: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut q: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut dmp1: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut dmq1: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    let mut iqmp: [u8; SGX_RSA3072_KEY_SIZE / 2] = [0; SGX_RSA3072_KEY_SIZE / 2];
+    
+    match rsgx_create_rsa_key_pair(
+        384,
+        4,
+        &mut n,
+        &mut d,
+        &mut e,
+        &mut p,
+        &mut q,
+        &mut dmp1,
+        &mut dmq1,
+        &mut iqmp)
+        {
+            Err(err) => {
+                println!("[-] rsgx_create_rsa_key_pair function fail: {}", err.as_str());
+                return -1;
+            },
+            Ok(()) => {}
+        };
+
+    pubkey.modulus = n;
+    pubkey.exponent = e;
+
+    privkey.modulus = n;
+    privkey.e = e;
+    privkey.d = d;
+    0
+}
+
+fn sha256_u(input: &str) -> [u8;32] {
+    let result = rsgx_sha256_slice(input.as_bytes());
+
+    match result {
+        Ok(output_hash) => {
+            output_hash
+        },
+        Err(_) => [0; 32]
+    }
 }
 
 fn main() {
@@ -551,81 +633,7 @@ fn main() {
             return;
         },
     };
-
-    let wast_list = vec![
-        // "../test_input/int_exprs.wast",
-        // "../test_input/conversions.wast",
-        // "../test_input/nop.wast",
-        // "../test_input/float_memory.wast",
-        // "../test_input/call.wast",
-        // "../test_input/memory.wast",
-        // "../test_input/utf8-import-module.wast",
-        // "../test_input/labels.wast",
-        // "../test_input/align.wast",
-        // "../test_input/memory_trap.wast",
-        // "../test_input/br.wast",
-        // "../test_input/globals.wast",
-        // "../test_input/comments.wast",
-        // "../test_input/get_local.wast",
-        // "../test_input/float_literals.wast",
-        // "../test_input/elem.wast",
-        // "../test_input/f64_bitwise.wast",
-        // "../test_input/custom_section.wast",
-        // "../test_input/inline-module.wast",
-        // "../test_input/call_indirect.wast",
-        // "../test_input/break-drop.wast",
-        // "../test_input/unreached-invalid.wast",
-        // "../test_input/utf8-import-field.wast",
-        // "../test_input/loop.wast",
-        // "../test_input/br_if.wast",
-        // "../test_input/select.wast",
-        // "../test_input/unwind.wast",
-        // "../test_input/binary.wast",
-        // "../test_input/tee_local.wast",
-        // "../test_input/custom.wast",
-        // "../test_input/start.wast",
-        // "../test_input/float_misc.wast",
-        // "../test_input/stack.wast",
-        // "../test_input/f32_cmp.wast",
-        // "../test_input/i64.wast",
-        // "../test_input/const.wast",
-        // "../test_input/unreachable.wast",
-        // "../test_input/switch.wast",
-        // "../test_input/resizing.wast",
-        // "../test_input/i32.wast",
-        // "../test_input/f64_cmp.wast",
-        // "../test_input/int_literals.wast",
-        // "../test_input/br_table.wast",
-        // "../test_input/traps.wast",
-        // "../test_input/return.wast",
-        // "../test_input/f64.wast",
-        // "../test_input/type.wast",
-        // "../test_input/fac.wast",
-        // "../test_input/set_local.wast",
-        // "../test_input/func.wast",
-        // "../test_input/f32.wast",
-        // "../test_input/f32_bitwise.wast",
-        // "../test_input/float_exprs.wast",
-        // "../test_input/linking.wast",
-        // "../test_input/skip-stack-guard-page.wast",
-        // "../test_input/names.wast",
-        // "../test_input/address.wast",
-        "../test_input/memory_redundancy.wast",
-        // "../test_input/block.wast",
-        // "../test_input/utf8-invalid-encoding.wast",
-        // "../test_input/left-to-right.wast",
-        "../test_input/forward.wast",
-        // "../test_input/typecheck.wast",
-        // "../test_input/store_retval.wast",
-        // "../test_input/imports.wast",
-        // "../test_input/exports.wast",
-        // "../test_input/endianness.wast",
-        // "../test_input/func_ptrs.wast",
-        // "../test_input/if.wast",
-        // "../test_input/token.wast",
-        // "../test_input/data.wast",
-        // "../test_input/utf8-custom-section-id.wast",
-    ];
+    let eid = enclave.geteid();
     
     // Init the sgxwasm spec driver engine
     match sgx_enclave_wasm_init(&enclave) {
@@ -637,13 +645,139 @@ fn main() {
         }
     }
 
-    for wfile in wast_list {
-        println!("======================= testing {} =====================", wfile);
-        run_a_wast(&enclave, wfile).unwrap();
+    // create rsa3072 public key and private key
+    let mut pubkey = sgx_rsa3072_public_key_t {
+        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
+        exponent: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
+    };
+    let mut privkey = sgx_rsa3072_key_t {
+        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
+        d: [0_u8; SGX_RSA3072_PRI_EXP_SIZE],
+        e: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
+    };
+    if generate_rsa_keypair(&mut pubkey, &mut privkey) == -1 {
+        println!("[-] generate_rsa_keypair function fail!");
+        enclave.destroy();
+        println!("\n[+] Destroy Enclave {}", eid);
+        return;
+    } else {
+        println!("[+] create rsa key pair success!");
+    }
+
+    // upload rsa3072 key pair to enclave
+    let mut retval = sgx_status_t::SGX_SUCCESS;
+    let result = unsafe{
+        upload_key(eid, &mut retval, &privkey, &pubkey)
+    };
+    match result {
+        sgx_status_t::SGX_SUCCESS => {
+            println!("[+] upload_key function success!");
+        },
+        _ => {
+            println!("[-] upload_key function fail: {}", result.as_str());
+        }
+    };
+
+    // let wast_list = vec![
+    //     // "../test_input/int_exprs.wast",
+    //     // "../test_input/conversions.wast",
+    //     // "../test_input/nop.wast",
+    //     // "../test_input/float_memory.wast",
+    //     // "../test_input/call.wast",
+    //     // "../test_input/memory.wast",
+    //     // "../test_input/utf8-import-module.wast",
+    //     // "../test_input/labels.wast",
+    //     // "../test_input/align.wast",
+    //     // "../test_input/memory_trap.wast",
+    //     // "../test_input/br.wast",
+    //     // "../test_input/globals.wast",
+    //     // "../test_input/comments.wast",
+    //     // "../test_input/get_local.wast",
+    //     // "../test_input/float_literals.wast",
+    //     // "../test_input/elem.wast",
+    //     // "../test_input/f64_bitwise.wast",
+    //     // "../test_input/custom_section.wast",
+    //     // "../test_input/inline-module.wast",
+    //     // "../test_input/call_indirect.wast",
+    //     // "../test_input/break-drop.wast",
+    //     // "../test_input/unreached-invalid.wast",
+    //     // "../test_input/utf8-import-field.wast",
+    //     // "../test_input/loop.wast",
+    //     // "../test_input/br_if.wast",
+    //     // "../test_input/select.wast",
+    //     // "../test_input/unwind.wast",
+    //     // "../test_input/binary.wast",
+    //     // "../test_input/tee_local.wast",
+    //     // "../test_input/custom.wast",
+    //     // "../test_input/start.wast",
+    //     // "../test_input/float_misc.wast",
+    //     // "../test_input/stack.wast",
+    //     // "../test_input/f32_cmp.wast",
+    //     // "../test_input/i64.wast",
+    //     // "../test_input/const.wast",
+    //     // "../test_input/unreachable.wast",
+    //     // "../test_input/switch.wast",
+    //     // "../test_input/resizing.wast",
+    //     // "../test_input/i32.wast",
+    //     // "../test_input/f64_cmp.wast",
+    //     // "../test_input/int_literals.wast",
+    //     // "../test_input/br_table.wast",
+    //     // "../test_input/traps.wast",
+    //     // "../test_input/return.wast",
+    //     // "../test_input/f64.wast",
+    //     // "../test_input/type.wast",
+    //     // "../test_input/fac.wast",
+    //     // "../test_input/set_local.wast",
+    //     // "../test_input/func.wast",
+    //     // "../test_input/f32.wast",
+    //     // "../test_input/f32_bitwise.wast",
+    //     // "../test_input/float_exprs.wast",
+    //     // "../test_input/linking.wast",
+    //     // "../test_input/skip-stack-guard-page.wast",
+    //     // "../test_input/names.wast",
+    //     // "../test_input/address.wast",
+    //     "../test_input/memory_redundancy.wast",
+    //     // "../test_input/block.wast",
+    //     // "../test_input/utf8-invalid-encoding.wast",
+    //     // "../test_input/left-to-right.wast",
+    //     "../test_input/forward.wast",
+    //     // "../test_input/typecheck.wast",
+    //     // "../test_input/store_retval.wast",
+    //     // "../test_input/imports.wast",
+    //     // "../test_input/exports.wast",
+    //     // "../test_input/endianness.wast",
+    //     // "../test_input/func_ptrs.wast",
+    //     // "../test_input/if.wast",
+    //     // "../test_input/token.wast",
+    //     // "../test_input/data.wast",
+    //     // "../test_input/utf8-custom-section-id.wast",
+    // ];
+
+    // for wfile in wast_list {
+    //     println!("======================= testing {} =====================", wfile);
+    //     run_a_wast(&enclave, wfile).unwrap();
+    // }
+
+    loop {
+        println!("Input wast file name: ");
+        let mut wast_file = String::new();
+        std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
+        wast_file = wast_file.trim().to_string();
+        if wast_file.eq("exit") {
+            break;
+        }
+        wast_file = format!("../test_input/{}.wast", wast_file);
+        println!("======================= testing {} =====================", &wast_file);
+        match run_a_wast(&enclave, &wast_file, &privkey) {
+            Ok(()) => {},
+            Err(x) => {
+                println!("{}", x);
+            }
+        };
     }
 
     enclave.destroy();
-    println!("\n[+] run_wasm success...");
+    println!("\n[+] Enclave destroy success! {}", eid);
 
     return;
 }
