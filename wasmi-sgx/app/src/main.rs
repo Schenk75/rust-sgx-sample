@@ -30,6 +30,8 @@ mod wasm_def;
 
 use wasm_def::{RuntimeValue, Error as InterpreterError};
 use wabt::script::{Action, Command, CommandKind, ScriptParser, Value};
+use std::fs;
+use std::io::prelude::*;
 
 extern crate serde;
 extern crate serde_json;
@@ -180,22 +182,15 @@ fn sgx_enclave_wasm_init(enclave : &SgxEnclave) -> Result<(),String> {
     Ok(())
 }
 
-fn sgx_enclave_wasm_invoke(req_str : String,
+fn sgx_enclave_wasm_invoke(sign_msg : Option<(String, sgx_rsa3072_signature_t, [u8;32])>,
                            result_max_len : usize,
-                           privkey: &sgx_rsa3072_key_t,
                            enclave : &SgxEnclave) -> (Result<Option<BoundaryValue>, InterpreterError>, sgx_status_t) {
     let enclave_id = enclave.geteid();
-    println!("req_str: {}", &req_str);
-
-    let hash = sha256_u(req_str.as_str());
-    // sign the sha256 hash by rsa3072 private key
-    let signature = match rsgx_rsa3072_sign_slice(&hash, privkey) {
-        Ok(sig) => {sig},
-        Err(err) => {
-            println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
-            panic!("sgx_enclave_wasm_invoke sign msg error!");
-        }
+    let (req_str, signature, hash) = match sign_msg {
+        Some((msg, sig, h)) => (msg, sig, h),
+        None => panic!("sgx_enclave_wasm_invoke sign msg error!")
     };
+    println!("req_str: {}", &req_str);
 
     let mut ret_val = sgx_status_t::SGX_SUCCESS;
     let     req_bin = req_str.as_ptr() as * const u8;
@@ -206,7 +201,6 @@ fn sgx_enclave_wasm_invoke(req_str : String,
 
     let sgx_ret = unsafe{sgxwasm_run_action(enclave_id,
                                      &mut ret_val,
-                                    //  &[0_u8; 32],
                                      &hash,
                                      &signature,
                                      req_bin,
@@ -262,10 +256,10 @@ fn sgx_enclave_wasm_load_module(module : Vec<u8>,
                   name : name.as_ref().map(|x| x.clone()),
                   module : module,
               };
+    let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
 
-    match sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
+    match sgx_enclave_wasm_invoke(sign_msg,
                                   MAXOUTPUT,
-                                  privkey,
                                   enclave) {
         (_, sgx_status_t::SGX_SUCCESS) => {
             Ok(())
@@ -297,9 +291,9 @@ fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, en
                                        .map(wabt_runtime_value_to_boundary_value)
                                        .collect()
             };
-            let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
+            let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
+            let result = sgx_enclave_wasm_invoke(sign_msg,
                                                  MAXOUTPUT,
-                                                 privkey,
                                                  enclave);
             match result {
                 (result, sgx_status_t::SGX_SUCCESS) => {
@@ -327,9 +321,9 @@ fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, en
                 module : module.as_ref().map(|x| x.clone()),
                 field  : field.clone(),
             };
-            let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
+            let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
+            let result = sgx_enclave_wasm_invoke(sign_msg,
                                                  MAXOUTPUT,
-                                                 privkey,
                                                  enclave);
 
             match result {
@@ -356,9 +350,10 @@ fn sgx_enclave_wasm_try_load(module : &[u8], privkey: &sgx_rsa3072_key_t, enclav
         module : module.to_vec(),
     };
 
-    let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
+    let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
+
+    let result = sgx_enclave_wasm_invoke(sign_msg,
                                          MAXOUTPUT,
-                                         privkey,
                                          enclave);
     match result {
         (_, sgx_status_t::SGX_SUCCESS) => {
@@ -384,10 +379,10 @@ fn sgx_enclave_wasm_register(name : Option<String>,
         name : name,
         as_name : as_name,
     };
+    let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
 
-    let result = sgx_enclave_wasm_invoke(serde_json::to_string(&req).unwrap(),
+    let result = sgx_enclave_wasm_invoke(sign_msg,
                                          MAXOUTPUT,
-                                         privkey,
                                          enclave);
 
     match result {
@@ -405,7 +400,6 @@ fn sgx_enclave_wasm_register(name : Option<String>,
 }
 
 fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<(), String> {
-
     // ScriptParser interface has changed. Need to feed it with wast content.
     let wast_content = match std::fs::read(wast_file) {
         Ok(content) => content,
@@ -572,7 +566,7 @@ fn run_a_wast(enclave   : &SgxEnclave,
     Ok(())
 }
 
-fn generate_rsa_keypair(pubkey: &mut sgx_rsa3072_public_key_t, privkey: &mut sgx_rsa3072_key_t) -> i32 {
+fn generate_rsa_keypair(pubkey: &mut sgx_rsa3072_public_key_t, privkey: &mut sgx_rsa3072_key_t, file_name: String) -> i32 {
     let mut n: [u8; SGX_RSA3072_KEY_SIZE] = [0; SGX_RSA3072_KEY_SIZE];   // 384
     let mut e: [u8; SGX_RSA3072_PUB_EXP_SIZE] = [1, 0, 0, 1];   // 4
     let mut d: [u8; SGX_RSA3072_PRI_EXP_SIZE] = [0; SGX_RSA3072_PRI_EXP_SIZE];   // 384
@@ -601,6 +595,34 @@ fn generate_rsa_keypair(pubkey: &mut sgx_rsa3072_public_key_t, privkey: &mut sgx
             Ok(()) => {}
         };
 
+    // create a file to store rsa key pair
+    match fs::File::create(&file_name) {
+        Ok(_f) => {},
+        Err(e) => {
+            println!("[-] create file fail: {}", e);
+            return -1;
+        }
+    }
+
+    // open file
+    let mut file = match fs::OpenOptions::new().append(true).open(&file_name) {
+        Ok(f) => f,
+        Err(e) => {
+            println!("[-] open file fail: {}", e);
+            return -1;
+        }
+    };
+
+    // write into file
+    file.write(&n).unwrap();
+    file.write(&e).unwrap();
+    file.write(&d).unwrap();
+    file.write(&p).unwrap();
+    file.write(&q).unwrap();
+    file.write(&dmp1).unwrap();
+    file.write(&dmq1).unwrap();
+    file.write(&iqmp).unwrap();
+
     pubkey.modulus = n;
     pubkey.exponent = e;
 
@@ -619,6 +641,19 @@ fn sha256_u(input: &str) -> [u8;32] {
         },
         Err(_) => [0; 32]
     }
+}
+
+fn sign_msg(msg: String, privkey: &sgx_rsa3072_key_t) -> Option<(String, sgx_rsa3072_signature_t, [u8;32])> {
+    let hash = sha256_u(msg.as_str());
+    // sign the sha256 hash by rsa3072 private key
+    let signature = match rsgx_rsa3072_sign_slice(&hash, privkey) {
+        Ok(sig) => {sig},
+        Err(err) => {
+            println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
+            return None;
+        }
+    };
+    Some((msg, signature, hash))
 }
 
 fn main() {
@@ -646,23 +681,37 @@ fn main() {
     }
 
     // create rsa3072 public key and private key
-    let mut pubkey = sgx_rsa3072_public_key_t {
-        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
-        exponent: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
+    let mut pubkey = sgx_rsa3072_public_key_t::default();
+    let mut privkey = sgx_rsa3072_key_t::default();
+    println!("Input rsa key file: ");
+    let mut key_file = String::new();
+    std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
+    key_file = key_file.trim().to_string();
+    match fs::File::open(&key_file) {
+        Ok(mut file) => {
+            let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
+            let mut e = [0_u8; 4];
+            let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
+            file.read(&mut n).unwrap();
+            file.read(&mut e).unwrap();
+            file.read(&mut d).unwrap();
+            pubkey.modulus = n;
+            pubkey.exponent = e;
+            privkey.modulus = n;
+            privkey.d = d;
+            privkey.e = e;
+        },
+        Err(_e) => {
+            if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
+                println!("[-] generate_rsa_keypair function fail!");
+                enclave.destroy();
+                println!("\n[+] Destroy Enclave {}", eid);
+                return;
+            } else {
+                println!("[+] create rsa key pair success!");
+            }
+        }
     };
-    let mut privkey = sgx_rsa3072_key_t {
-        modulus: [0_u8; SGX_RSA3072_KEY_SIZE],
-        d: [0_u8; SGX_RSA3072_PRI_EXP_SIZE],
-        e: [0_u8; SGX_RSA3072_PUB_EXP_SIZE],
-    };
-    if generate_rsa_keypair(&mut pubkey, &mut privkey) == -1 {
-        println!("[-] generate_rsa_keypair function fail!");
-        enclave.destroy();
-        println!("\n[+] Destroy Enclave {}", eid);
-        return;
-    } else {
-        println!("[+] create rsa key pair success!");
-    }
 
     // upload rsa3072 key pair to enclave
     let mut retval = sgx_status_t::SGX_SUCCESS;

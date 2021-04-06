@@ -42,7 +42,6 @@ use sgxwasm::{SpecDriver, boundary_value_to_runtime_value, result_covert};
 use sgx_types::*;
 use sgx_tcrypto::*;
 use std::slice;
-use std::collections::HashMap;
 
 use wasmi::{ModuleInstance, ImportsBuilder, RuntimeValue, Error as InterpreterError, Module};
 
@@ -286,7 +285,6 @@ pub extern "C" fn upload_key(privkey: &sgx_rsa3072_key_t, pubkey: &sgx_rsa3072_p
     *k = *privkey;
     let mut k = PUBLIC_KEY.lock().unwrap();
     *k = *pubkey;
-    // PRIVATE_KEY.lock().unwrap().insert(1, *privkey);
-    println!("[+] upload key pair success!");
+    // println!("[+] upload key pair success!");
     sgx_status_t::SGX_SUCCESS
 }
