@@ -92,6 +92,7 @@ fn main() {
 
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
+    // do the verification in this step(by sth like constructor?)
     tls.write_all(b"hello").unwrap();
 
     let mut plaintext = Vec::new();

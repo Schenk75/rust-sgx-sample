@@ -53,10 +53,6 @@ cd bin
 ./app (add --unlink if your spid's type is unlinkable)
 ```
 
-```bash
-./app: error while loading shared libraries: libsgx_uae_service.so: cannot open shared object file: No such file or directory
-```
-
 Start client 
 
 ```
