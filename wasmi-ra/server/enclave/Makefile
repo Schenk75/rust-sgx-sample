@@ -16,7 +16,7 @@
 # under the License.
 Rust_Enclave_Name := libenclave.a
 Rust_Enclave_Files := $(wildcard src/*.rs)
-Rust_Target_Path := $(CURDIR)/../../../xargo
+Rust_Target_Path := $(CURDIR)/../../../../xargo
 
 ifeq ($(MITIGATION-CVE-2020-0551), LOAD)
 export MITIGATION_CVE_2020_0551=LOAD
@@ -31,8 +31,10 @@ all: $(Rust_Enclave_Name)
 $(Rust_Enclave_Name): $(Rust_Enclave_Files)
 ifeq ($(XARGO_SGX), 1)
 	RUST_TARGET_PATH=$(Rust_Target_Path) xargo build --target x86_64-unknown-linux-sgx --release
-	cp ./target/x86_64-unknown-linux-sgx/release/libwasmienclave.a ../lib/libenclave.a
+	cd ./target/x86_64-unknown-linux-sgx/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
+	cp ./target/x86_64-unknown-linux-sgx/release/libenclave.a ../lib/libenclave.a
 else
 	cargo build --release
-	cp ./target/release/libwasmienclave.a ../lib/libenclave.a
+	cd ./target/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
+	cp ./target/release/libenclave.a ../lib/libenclave.a
 endif

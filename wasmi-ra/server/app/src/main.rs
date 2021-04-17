@@ -30,8 +30,10 @@ mod wasm_def;
 
 use wasm_def::{RuntimeValue, Error as InterpreterError};
 use wabt::script::{Action, Command, CommandKind, ScriptParser, Value};
-use std::fs;
+use std::os::unix::io::{IntoRawFd, AsRawFd};
+use std::{fs, env};
 use std::io::prelude::*;
+use std::net::{TcpListener, TcpStream, SocketAddr};
 
 extern crate serde;
 extern crate serde_json;
@@ -56,6 +58,8 @@ extern {
         retval: *mut sgx_status_t,
         privkey: &sgx_rsa3072_key_t,
         pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t;
+    fn run_server(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
+        socket_fd: c_int, sign_type: sgx_quote_sign_type_t) -> sgx_status_t;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -657,6 +661,17 @@ fn sign_msg(msg: String, privkey: &sgx_rsa3072_key_t) -> Option<(String, sgx_rsa
 }
 
 fn main() {
+    let mut args: Vec<_> = env::args().collect();
+    let mut sign_type = sgx_quote_sign_type_t::SGX_LINKABLE_SIGNATURE;
+    args.remove(0);
+    while !args.is_empty() {
+        match args.remove(0).as_ref() {
+            "--unlink" => sign_type = sgx_quote_sign_type_t::SGX_UNLINKABLE_SIGNATURE,
+            _ => {
+                panic!("Only --unlink is accepted");
+            }
+        }
+    }
 
     let enclave = match init_enclave() {
         Ok(r) => {
@@ -680,153 +695,192 @@ fn main() {
         }
     }
 
-    // create rsa3072 public key and private key
-    let mut pubkey = sgx_rsa3072_public_key_t::default();
-    let mut privkey = sgx_rsa3072_key_t::default();
-    println!("Input rsa key file: ");
-    let mut key_file = String::new();
-    std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
-    key_file = key_file.trim().to_string();
-    match fs::File::open(&key_file) {
-        Ok(mut file) => {
-            let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
-            let mut e = [0_u8; 4];
-            let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
-            file.read(&mut n).unwrap();
-            file.read(&mut e).unwrap();
-            file.read(&mut d).unwrap();
-            pubkey.modulus = n;
-            pubkey.exponent = e;
-            privkey.modulus = n;
-            privkey.d = d;
-            privkey.e = e;
-        },
-        Err(_e) => {
-            if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
-                println!("[-] generate_rsa_keypair function fail!");
-                enclave.destroy();
-                println!("\n[+] Destroy Enclave {}", eid);
-                return;
-            } else {
-                println!("[+] create rsa key pair success!");
+    println!("Running as server...");
+    let listener = TcpListener::bind("0.0.0.0:3443").unwrap();
+
+    // // create rsa3072 public key and private key
+    // let mut pubkey = sgx_rsa3072_public_key_t::default();
+    // let mut privkey = sgx_rsa3072_key_t::default();
+    // println!("Input rsa key file: ");
+    // let mut key_file = String::new();
+    // std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
+    // key_file = key_file.trim().to_string();
+    // match fs::File::open(&key_file) {
+    //     Ok(mut file) => {
+    //         let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
+    //         let mut e = [0_u8; 4];
+    //         let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
+    //         file.read(&mut n).unwrap();
+    //         file.read(&mut e).unwrap();
+    //         file.read(&mut d).unwrap();
+    //         pubkey.modulus = n;
+    //         pubkey.exponent = e;
+    //         privkey.modulus = n;
+    //         privkey.d = d;
+    //         privkey.e = e;
+    //     },
+    //     Err(_e) => {
+    //         if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
+    //             println!("[-] generate_rsa_keypair function fail!");
+    //             enclave.destroy();
+    //             println!("\n[+] Destroy Enclave {}", eid);
+    //             return;
+    //         } else {
+    //             println!("[+] create rsa key pair success!");
+    //         }
+    //     }
+    // };
+
+    // // upload rsa3072 key pair to enclave
+    // let mut retval = sgx_status_t::SGX_SUCCESS;
+    // let result = unsafe{
+    //     upload_key(eid, &mut retval, &privkey, &pubkey)
+    // };
+    // match result {
+    //     sgx_status_t::SGX_SUCCESS => {
+    //         println!("[+] upload_key function success!");
+    //     },
+    //     _ => {
+    //         println!("[-] upload_key function fail: {}", result.as_str());
+    //     }
+    // };
+
+    match listener.accept() {
+        Ok((socket, addr)) => {
+            println!("new client from {:?}", addr);
+            let mut retval = sgx_status_t::SGX_SUCCESS;
+            let result = unsafe {
+                run_server(eid, &mut retval, socket.as_raw_fd(), sign_type)
+            };
+            match result {
+                sgx_status_t::SGX_SUCCESS => {
+                    println!("ECALL success!");
+                },
+                _ => {
+                    println!("[-] ECALL Enclave Failed {}!", result.as_str());
+                    return;
+                }
             }
         }
-    };
-
-    // upload rsa3072 key pair to enclave
-    let mut retval = sgx_status_t::SGX_SUCCESS;
-    let result = unsafe{
-        upload_key(eid, &mut retval, &privkey, &pubkey)
-    };
-    match result {
-        sgx_status_t::SGX_SUCCESS => {
-            println!("[+] upload_key function success!");
-        },
-        _ => {
-            println!("[-] upload_key function fail: {}", result.as_str());
-        }
-    };
-
-    // let wast_list = vec![
-    //     // "../test_input/int_exprs.wast",
-    //     // "../test_input/conversions.wast",
-    //     // "../test_input/nop.wast",
-    //     // "../test_input/float_memory.wast",
-    //     // "../test_input/call.wast",
-    //     // "../test_input/memory.wast",
-    //     // "../test_input/utf8-import-module.wast",
-    //     // "../test_input/labels.wast",
-    //     // "../test_input/align.wast",
-    //     // "../test_input/memory_trap.wast",
-    //     // "../test_input/br.wast",
-    //     // "../test_input/globals.wast",
-    //     // "../test_input/comments.wast",
-    //     // "../test_input/get_local.wast",
-    //     // "../test_input/float_literals.wast",
-    //     // "../test_input/elem.wast",
-    //     // "../test_input/f64_bitwise.wast",
-    //     // "../test_input/custom_section.wast",
-    //     // "../test_input/inline-module.wast",
-    //     // "../test_input/call_indirect.wast",
-    //     // "../test_input/break-drop.wast",
-    //     // "../test_input/unreached-invalid.wast",
-    //     // "../test_input/utf8-import-field.wast",
-    //     // "../test_input/loop.wast",
-    //     // "../test_input/br_if.wast",
-    //     // "../test_input/select.wast",
-    //     // "../test_input/unwind.wast",
-    //     // "../test_input/binary.wast",
-    //     // "../test_input/tee_local.wast",
-    //     // "../test_input/custom.wast",
-    //     // "../test_input/start.wast",
-    //     // "../test_input/float_misc.wast",
-    //     // "../test_input/stack.wast",
-    //     // "../test_input/f32_cmp.wast",
-    //     // "../test_input/i64.wast",
-    //     // "../test_input/const.wast",
-    //     // "../test_input/unreachable.wast",
-    //     // "../test_input/switch.wast",
-    //     // "../test_input/resizing.wast",
-    //     // "../test_input/i32.wast",
-    //     // "../test_input/f64_cmp.wast",
-    //     // "../test_input/int_literals.wast",
-    //     // "../test_input/br_table.wast",
-    //     // "../test_input/traps.wast",
-    //     // "../test_input/return.wast",
-    //     // "../test_input/f64.wast",
-    //     // "../test_input/type.wast",
-    //     // "../test_input/fac.wast",
-    //     // "../test_input/set_local.wast",
-    //     // "../test_input/func.wast",
-    //     // "../test_input/f32.wast",
-    //     // "../test_input/f32_bitwise.wast",
-    //     // "../test_input/float_exprs.wast",
-    //     // "../test_input/linking.wast",
-    //     // "../test_input/skip-stack-guard-page.wast",
-    //     // "../test_input/names.wast",
-    //     // "../test_input/address.wast",
-    //     "../test_input/memory_redundancy.wast",
-    //     // "../test_input/block.wast",
-    //     // "../test_input/utf8-invalid-encoding.wast",
-    //     // "../test_input/left-to-right.wast",
-    //     "../test_input/forward.wast",
-    //     // "../test_input/typecheck.wast",
-    //     // "../test_input/store_retval.wast",
-    //     // "../test_input/imports.wast",
-    //     // "../test_input/exports.wast",
-    //     // "../test_input/endianness.wast",
-    //     // "../test_input/func_ptrs.wast",
-    //     // "../test_input/if.wast",
-    //     // "../test_input/token.wast",
-    //     // "../test_input/data.wast",
-    //     // "../test_input/utf8-custom-section-id.wast",
-    // ];
-
-    // for wfile in wast_list {
-    //     println!("======================= testing {} =====================", wfile);
-    //     run_a_wast(&enclave, wfile).unwrap();
-    // }
-
-    loop {
-        println!("Input wast file name: ");
-        let mut wast_file = String::new();
-        std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
-        wast_file = wast_file.trim().to_string();
-        if wast_file.eq("exit") {
-            break;
-        }
-        wast_file = format!("../test_input/{}.wast", wast_file);
-        println!("======================= testing {} =====================", &wast_file);
-        match run_a_wast(&enclave, &wast_file, &privkey) {
-            Ok(()) => {},
-            Err(x) => {
-                println!("{}", x);
-            }
-        };
+        Err(e) => println!("couldn't get client: {:?}", e),
     }
+
+    // loop {
+    //     // println!("Input wast file name: ");
+    //     let mut wast_file = String::new();
+        
+
+    //     // std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
+    //     // wast_file = wast_file.trim().to_string();
+    //     if wast_file.eq("exit") {
+    //         break;
+    //     }
+    //     wast_file = format!("../test_input/{}.wast", wast_file);
+    //     println!("======================= testing {} =====================", &wast_file);
+    //     match run_a_wast(&enclave, &wast_file, &privkey) {
+    //         Ok(()) => {},
+    //         Err(x) => {
+    //             println!("{}", x);
+    //         }
+    //     };
+    // }
 
     enclave.destroy();
     println!("\n[+] Enclave destroy success! {}", eid);
 
     return;
+}
+
+
+#[no_mangle]
+pub extern "C"
+fn ocall_sgx_init_quote(ret_ti: *mut sgx_target_info_t,
+                        ret_gid : *mut sgx_epid_group_id_t) -> sgx_status_t {
+    println!("Entering ocall_sgx_init_quote");
+    unsafe {sgx_init_quote(ret_ti, ret_gid)}
+}
+
+pub fn lookup_ipv4(host: &str, port: u16) -> SocketAddr {
+    use std::net::ToSocketAddrs;
+
+    let addrs = (host, port).to_socket_addrs().unwrap();
+    for addr in addrs {
+        if let SocketAddr::V4(_) = addr {
+            return addr;
+        }
+    }
+
+    unreachable!("Cannot lookup address");
+}
+
+#[no_mangle]
+pub extern "C"
+fn ocall_get_ias_socket(ret_fd : *mut c_int) -> sgx_status_t {
+    let port = 443;
+    let hostname = "api.trustedservices.intel.com";
+    let addr = lookup_ipv4(hostname, port);
+    let sock = TcpStream::connect(&addr).expect("[-] Connect tls server failed!");
+
+    unsafe {*ret_fd = sock.into_raw_fd();}
+
+    sgx_status_t::SGX_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C"
+fn ocall_get_quote (p_sigrl            : *const u8,
+                    sigrl_len          : u32,
+                    p_report           : *const sgx_report_t,
+                    quote_type         : sgx_quote_sign_type_t,
+                    p_spid             : *const sgx_spid_t,
+                    p_nonce            : *const sgx_quote_nonce_t,
+                    p_qe_report        : *mut sgx_report_t,
+                    p_quote            : *mut u8,
+                    _maxlen             : u32,
+                    p_quote_len        : *mut u32) -> sgx_status_t {
+    println!("Entering ocall_get_quote");
+
+    let mut real_quote_len : u32 = 0;
+
+    let ret = unsafe {
+        sgx_calc_quote_size(p_sigrl, sigrl_len, &mut real_quote_len as *mut u32)
+    };
+
+    if ret != sgx_status_t::SGX_SUCCESS {
+        println!("sgx_calc_quote_size returned {}", ret);
+        return ret;
+    }
+
+    println!("quote size = {}", real_quote_len);
+    unsafe { *p_quote_len = real_quote_len; }
+
+    let ret = unsafe {
+        sgx_get_quote(p_report,
+                      quote_type,
+                      p_spid,
+                      p_nonce,
+                      p_sigrl,
+                      sigrl_len,
+                      p_qe_report,
+                      p_quote as *mut sgx_quote_t,
+                      real_quote_len)
+        };
+
+    if ret != sgx_status_t::SGX_SUCCESS {
+        println!("sgx_calc_quote_size returned {}", ret);
+        return ret;
+    }
+
+    println!("sgx_calc_quote_size returned {}", ret);
+    ret
+}
+
+#[no_mangle]
+pub extern "C"
+fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
+                          enclave_trusted: i32,
+                          update_info: * mut sgx_update_info_bit_t) -> sgx_status_t {
+    unsafe{
+        sgx_report_attestation_status(platform_blob, enclave_trusted, update_info)
+    }
 }
