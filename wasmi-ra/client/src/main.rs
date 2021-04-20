@@ -86,14 +86,23 @@ fn main() {
 
     let client_config = make_config();
     let dns_name = webpki::DNSNameRef::try_from_ascii_str("localhost").unwrap();
+    
+
     let mut sess = rustls::ClientSession::new(&Arc::new(client_config), dns_name);
-
     let mut conn = TcpStream::connect(SERVERADDR).unwrap();
-
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
+    println!("Write msg: ");
+    let mut msg = String::new();
+    std::io::stdin().read_line(&mut msg).expect("Failed to read line");
+
     // do the verification in this step (by sth like constructor?)
-    tls.write_all(b"hello").unwrap();
+    match tls.write_all(msg.as_bytes()) {
+        Ok(_) => {},
+        Err(x) => {
+            println!("[-] TLS write msg error: {}", x);
+        }
+    };
 
     let mut plaintext = Vec::new();
     match tls.read_to_end(&mut plaintext) {

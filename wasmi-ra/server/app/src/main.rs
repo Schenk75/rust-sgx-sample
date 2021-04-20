@@ -59,7 +59,8 @@ extern {
         privkey: &sgx_rsa3072_key_t,
         pubkey: &sgx_rsa3072_public_key_t) -> sgx_status_t;
     fn run_server(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
-        socket_fd: c_int, sign_type: sgx_quote_sign_type_t) -> sgx_status_t;
+        socket_fd: c_int, sign_type: sgx_quote_sign_type_t,
+        filename: *mut u8, max_len: usize) -> sgx_status_t;
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -698,72 +699,99 @@ fn main() {
     println!("Running as server...");
     let listener = TcpListener::bind("0.0.0.0:3443").unwrap();
 
-    // // create rsa3072 public key and private key
-    // let mut pubkey = sgx_rsa3072_public_key_t::default();
-    // let mut privkey = sgx_rsa3072_key_t::default();
-    // println!("Input rsa key file: ");
-    // let mut key_file = String::new();
-    // std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
-    // key_file = key_file.trim().to_string();
-    // match fs::File::open(&key_file) {
-    //     Ok(mut file) => {
-    //         let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
-    //         let mut e = [0_u8; 4];
-    //         let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
-    //         file.read(&mut n).unwrap();
-    //         file.read(&mut e).unwrap();
-    //         file.read(&mut d).unwrap();
-    //         pubkey.modulus = n;
-    //         pubkey.exponent = e;
-    //         privkey.modulus = n;
-    //         privkey.d = d;
-    //         privkey.e = e;
-    //     },
-    //     Err(_e) => {
-    //         if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
-    //             println!("[-] generate_rsa_keypair function fail!");
-    //             enclave.destroy();
-    //             println!("\n[+] Destroy Enclave {}", eid);
-    //             return;
-    //         } else {
-    //             println!("[+] create rsa key pair success!");
-    //         }
-    //     }
-    // };
-
-    // // upload rsa3072 key pair to enclave
-    // let mut retval = sgx_status_t::SGX_SUCCESS;
-    // let result = unsafe{
-    //     upload_key(eid, &mut retval, &privkey, &pubkey)
-    // };
-    // match result {
-    //     sgx_status_t::SGX_SUCCESS => {
-    //         println!("[+] upload_key function success!");
-    //     },
-    //     _ => {
-    //         println!("[-] upload_key function fail: {}", result.as_str());
-    //     }
-    // };
+    let mut result_vec:Vec<u8> = vec![0; MAXOUTPUT];
+    let result_slice = &mut result_vec[..];
 
     match listener.accept() {
         Ok((socket, addr)) => {
             println!("new client from {:?}", addr);
             let mut retval = sgx_status_t::SGX_SUCCESS;
             let result = unsafe {
-                run_server(eid, &mut retval, socket.as_raw_fd(), sign_type)
+                run_server(eid, &mut retval, socket.as_raw_fd(), sign_type, 
+                    result_slice.as_mut_ptr(), MAXOUTPUT)
             };
             match result {
                 sgx_status_t::SGX_SUCCESS => {
-                    println!("ECALL success!");
+                    println!("Ecall run_server success!");
                 },
                 _ => {
-                    println!("[-] ECALL Enclave Failed {}!", result.as_str());
+                    println!("[-] ECALL run_server Failed {}!", result.as_str());
                     return;
                 }
             }
         }
         Err(e) => println!("couldn't get client: {:?}", e),
     }
+
+    // We need to trim all trailing '\0's before conver to string
+    let mut result_vec:Vec<u8> = result_slice.to_vec();
+    result_vec.retain(|x| *x != 0x00u8);
+    let mut wast_file = String::new();
+
+    // Now result_vec only includes essential chars
+    if result_vec.len() != 0 {
+        wast_file = String::from_utf8(result_vec).unwrap().trim().to_string();
+    } else {
+        println!("[-] result_vec is empty");
+    }
+    println!("wasm file: {}", wast_file);
+
+
+    // create rsa3072 public key and private key
+    let mut pubkey = sgx_rsa3072_public_key_t::default();
+    let mut privkey = sgx_rsa3072_key_t::default();
+    println!("Input rsa key file: ");
+    let mut key_file = String::new();
+    std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
+    key_file = key_file.trim().to_string();
+    match fs::File::open(&key_file) {
+        Ok(mut file) => {
+            let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
+            let mut e = [0_u8; 4];
+            let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
+            file.read(&mut n).unwrap();
+            file.read(&mut e).unwrap();
+            file.read(&mut d).unwrap();
+            pubkey.modulus = n;
+            pubkey.exponent = e;
+            privkey.modulus = n;
+            privkey.d = d;
+            privkey.e = e;
+        },
+        Err(_e) => {
+            if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
+                println!("[-] generate_rsa_keypair function fail!");
+                enclave.destroy();
+                println!("\n[+] Destroy Enclave {}", eid);
+                return;
+            } else {
+                println!("[+] create rsa key pair success!");
+            }
+        }
+    };
+
+    // upload rsa3072 key pair to enclave
+    let mut retval = sgx_status_t::SGX_SUCCESS;
+    let result = unsafe{
+        upload_key(eid, &mut retval, &privkey, &pubkey)
+    };
+    match result {
+        sgx_status_t::SGX_SUCCESS => {
+            println!("[+] upload_key function success!");
+        },
+        _ => {
+            println!("[-] upload_key function fail: {}", result.as_str());
+        }
+    };
+
+    wast_file = format!("../test_input/{}.wast", wast_file);
+    println!("======================= testing {} =====================", &wast_file);
+    match run_a_wast(&enclave, &wast_file, &privkey) {
+        Ok(()) => {},
+        Err(x) => {
+            println!("{}", x);
+        }
+    };
 
     // loop {
     //     // println!("Input wast file name: ");

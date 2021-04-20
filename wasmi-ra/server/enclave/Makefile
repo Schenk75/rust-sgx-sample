@@ -31,10 +31,10 @@ all: $(Rust_Enclave_Name)
 $(Rust_Enclave_Name): $(Rust_Enclave_Files)
 ifeq ($(XARGO_SGX), 1)
 	RUST_TARGET_PATH=$(Rust_Target_Path) xargo build --target x86_64-unknown-linux-sgx --release
-	cd ./target/x86_64-unknown-linux-sgx/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
-	cp ./target/x86_64-unknown-linux-sgx/release/libenclave.a ../lib/libenclave.a
+#	cd ./target/x86_64-unknown-linux-sgx/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
+	cp ./target/x86_64-unknown-linux-sgx/release/libwasmienclave.a ../lib/libenclave.a
 else
 	cargo build --release
-	cd ./target/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
-	cp ./target/release/libenclave.a ../lib/libenclave.a
+#	cd ./target/release && ar x libuera.a && ar x libwasmienclave.a && ar crs libenclave.a *.o && rm *.o
+	cp ./target/release/libwasmienclave.a ../lib/libenclave.a
 endif

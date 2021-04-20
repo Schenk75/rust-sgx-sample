@@ -38,7 +38,8 @@ enclave {
                                                            size_t out_max_len);
         public void examine_module();
         public sgx_status_t upload_key([in] sgx_rsa3072_key_t* privkey, [in] sgx_rsa3072_public_key_t* pubkey);
-        public sgx_status_t run_server(int fd, sgx_quote_sign_type_t quote_type);
+        public sgx_status_t run_server( int fd, sgx_quote_sign_type_t quote_type,
+                                        [out, size=max_len] uint8_t* filename, size_t max_len);
     };
 
     untrusted {
