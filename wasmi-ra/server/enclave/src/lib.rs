@@ -76,8 +76,6 @@ pub const SIGRL_SUFFIX:&'static str = "/sgx/dev/attestation/v3/sigrl/";
 pub const REPORT_SUFFIX:&'static str = "/sgx/dev/attestation/v3/report";
 pub const CERTEXPIRYDAYS: i64 = 90i64;
 
-static MAXOUTPUT: usize = 4096;
-
 extern "C" {
     pub fn ocall_sgx_init_quote ( ret_val : *mut sgx_status_t,
                   ret_ti  : *mut sgx_target_info_t,
@@ -95,6 +93,7 @@ extern "C" {
                 p_quote            : *mut u8,
                 maxlen             : u32,
                 p_quote_len        : *mut u32) -> sgx_status_t;
+    pub fn ocall_run_wast (ret_val: *mut sgx_status_t, wast_name: *const u8, name_len: usize) -> sgx_status_t;
 }
 
 lazy_static!{
@@ -749,7 +748,7 @@ fn get_ias_api_key() -> String {
 }
 
 #[no_mangle]
-pub extern "C" fn run_server(socket_fd : c_int, sign_type: sgx_quote_sign_type_t, filename: *mut u8, max_len: usize) -> sgx_status_t {
+pub extern "C" fn run_server(socket_fd : c_int, sign_type: sgx_quote_sign_type_t) -> sgx_status_t {
     // Generate Keypair
     let ecc_handle = SgxEccHandle::new();
     let _result = ecc_handle.open();
@@ -792,31 +791,42 @@ pub extern "C" fn run_server(socket_fd : c_int, sign_type: sgx_quote_sign_type_t
     let mut conn = TcpStream::new(socket_fd).unwrap();
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    let mut plaintext = [0u8;1024]; //Vec::new();
+    loop {
+        println!("Server running...");
+        let mut plaintext = [0u8;1024];
+        // let mut flag = false;
 
-    match tls.read(&mut plaintext) {
-        Ok(_) => {
-            let msg = str::from_utf8(&plaintext).unwrap();
-            println!("Client said: {}", msg);
-            
-            if plaintext.len() < max_len {
-                unsafe {
-                    ptr::copy_nonoverlapping(plaintext.as_ptr(),
-                                                filename,
-                                                plaintext.len());
+        match tls.read(&mut plaintext) {
+            Ok(_) => {
+                let msg = str::from_utf8(&plaintext).unwrap().trim();
+                println!("Client said: {}", msg);
+                // // what the hell is the msg????
+                // if msg == "exit" {
+                //     println!("break");
+                // }
+
+                let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
+                let result = unsafe {
+                    ocall_run_wast(
+                        &mut ret_val as *mut sgx_status_t, 
+                        msg.to_string().as_ptr() as *const u8, 
+                        msg.len())
+                };
+                match result {
+                    sgx_status_t::SGX_SUCCESS => {},
+                    _ => {
+                        println!("[-] ocall_run_wast fail: {}", result.as_str());
+                    }
                 }
-            } else {
-                println!("Result len = {} > buf size = {}", plaintext.len(), MAXOUTPUT);
-                return sgx_status_t::SGX_ERROR_WASM_BUFFER_TOO_SHORT;
+            },
+            Err(e) => {
+                println!("Error in read_to_end: {:?}", e);
+                break;
             }
-        },
-        Err(e) => {
-            println!("Error in read_to_end: {:?}", e);
-            panic!("");
-        }
-    };
+        };
 
-    tls.write("server hello".as_bytes()).unwrap();
+        tls.write_all("server hello".as_bytes()).unwrap();
+    }
     
     sgx_status_t::SGX_SUCCESS
 }

@@ -92,26 +92,31 @@ fn main() {
     let mut conn = TcpStream::connect(SERVERADDR).unwrap();
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    println!("Write msg: ");
-    let mut msg = String::new();
-    std::io::stdin().read_line(&mut msg).expect("Failed to read line");
-
-    // do the verification in this step (by sth like constructor?)
-    match tls.write_all(msg.as_bytes()) {
-        Ok(_) => {},
-        Err(x) => {
-            println!("[-] TLS write msg error: {}", x);
+    loop {
+        println!("Write msg: ");
+        let mut msg = String::new();
+        std::io::stdin().read_line(&mut msg).expect("Failed to read line");
+        msg = msg.trim().to_string();
+    
+        // do the verification in this step (by sth like constructor?)
+        match tls.write_all(msg.as_bytes()) {
+            Ok(_) => {},
+            Err(x) => {
+                println!("[-] TLS write msg error: {}", x);
+            }
+        };
+    
+        let mut plaintext = [0u8;1024];
+        match tls.read(&mut plaintext) {
+            Ok(_) => {
+                println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                println!("EOF (tls)");
+            }
+            Err(e) => println!("Error in read_to_end: {:?}", e),
         }
-    };
-
-    let mut plaintext = Vec::new();
-    match tls.read_to_end(&mut plaintext) {
-        Ok(_) => {
-            println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
-        }
-        Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-            println!("EOF (tls)");
-        }
-        Err(e) => println!("Error in read_to_end: {:?}", e),
+        if msg.eq("exit") {break;}
     }
+    
 }

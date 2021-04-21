@@ -100,6 +100,7 @@ TWINE論文
 #### 學習substrate
 
 - 基礎內容：blog
+- *substrate/primitives/sandbox* ：使用到wasmi的沙箱環境
 
 #### enclave遠程認證
 
@@ -157,6 +158,13 @@ TWINE論文
   - step2: 加入證書認證，client端通過認證後傳給服務器wasm腳本文件名稱（修改run_server的代碼）
 
 --------
+
+4/21
+
+- 完善wasmi-ra代碼：
+  - step1：服務端一直循環監聽
+
+---------
 
 
 
