@@ -160,7 +160,7 @@ fn init_enclave() -> SgxResult<SgxEnclave> {
                        &mut misc_attr)
 }
 
-fn sgx_enclave_wasm_init(enclave : &SgxEnclave) -> Result<(),String> {
+fn sgx_enclave_wasm_init(enclave: &SgxEnclave) -> Result<(),String> {
     let mut retval:sgx_status_t = sgx_status_t::SGX_SUCCESS;
     let result = unsafe {
         sgxwasm_init(enclave.geteid(),
@@ -188,8 +188,7 @@ fn sgx_enclave_wasm_init(enclave : &SgxEnclave) -> Result<(),String> {
 
 fn sgx_enclave_wasm_invoke(sign_msg : Option<(String, sgx_rsa3072_signature_t, [u8;32])>,
                            result_max_len : usize,
-                           enclave : &SgxEnclave) -> (Result<Option<BoundaryValue>, InterpreterError>, sgx_status_t) {
-    let enclave_id = enclave.geteid();
+                           enclave_id : u64) -> (Result<Option<BoundaryValue>, InterpreterError>, sgx_status_t) {
     let (req_str, signature, hash) = match sign_msg {
         Some((msg, sig, h)) => (msg, sig, h),
         None => panic!("sgx_enclave_wasm_invoke sign msg error!")
@@ -252,7 +251,7 @@ fn sgx_enclave_wasm_invoke(sign_msg : Option<(String, sgx_rsa3072_signature_t, [
 fn sgx_enclave_wasm_load_module(module : Vec<u8>,
                                 name   : &Option<String>,
                                 privkey: &sgx_rsa3072_key_t,
-                                enclave : &SgxEnclave)
+                                enclave_id : u64)
                                 -> Result<(), String> {
 
     // Init a SgxWasmAction::LoadModule struct and send it to enclave
@@ -261,10 +260,9 @@ fn sgx_enclave_wasm_load_module(module : Vec<u8>,
                   module : module,
               };
     let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
-
     match sgx_enclave_wasm_invoke(sign_msg,
                                   MAXOUTPUT,
-                                  enclave) {
+                                  enclave_id) {
         (_, sgx_status_t::SGX_SUCCESS) => {
             Ok(())
         },
@@ -278,8 +276,7 @@ fn sgx_enclave_wasm_load_module(module : Vec<u8>,
     }
 }
 
-
-fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<Option<RuntimeValue>, InterpreterError> {
+fn sgx_enclave_wasm_run_action(action: &Action, privkey: &sgx_rsa3072_key_t, enclave_id: u64) -> Result<Option<RuntimeValue>, InterpreterError> {
     match action {
         &Action::Invoke {
             ref module,
@@ -298,7 +295,7 @@ fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, en
             let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
             let result = sgx_enclave_wasm_invoke(sign_msg,
                                                  MAXOUTPUT,
-                                                 enclave);
+                                                 enclave_id);
             match result {
                 (result, sgx_status_t::SGX_SUCCESS) => {
                     let result_obj : Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
@@ -328,7 +325,7 @@ fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, en
             let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
             let result = sgx_enclave_wasm_invoke(sign_msg,
                                                  MAXOUTPUT,
-                                                 enclave);
+                                                 enclave_id);
 
             match result {
                 (result, sgx_status_t::SGX_SUCCESS) => {
@@ -348,17 +345,16 @@ fn sgx_enclave_wasm_run_action(action : &Action, privkey: &sgx_rsa3072_key_t, en
 }
 
 // Malform
-fn sgx_enclave_wasm_try_load(module : &[u8], privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<(), InterpreterError> {
+fn sgx_enclave_wasm_try_load(module: &[u8], privkey: &sgx_rsa3072_key_t, enclave_id: u64) -> Result<(), InterpreterError> {
     // Make a SgxWasmAction::TryLoad structure and send it to sgx_enclave_wasm_invoke
     let req = SgxWasmAction::TryLoad {
         module : module.to_vec(),
     };
 
     let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
-
     let result = sgx_enclave_wasm_invoke(sign_msg,
                                          MAXOUTPUT,
-                                         enclave);
+                                         enclave_id);
     match result {
         (_, sgx_status_t::SGX_SUCCESS) => {
             Ok(())
@@ -377,17 +373,16 @@ fn sgx_enclave_wasm_try_load(module : &[u8], privkey: &sgx_rsa3072_key_t, enclav
 fn sgx_enclave_wasm_register(name : Option<String>,
                              as_name : String,
                              privkey: &sgx_rsa3072_key_t,
-                             enclave : &SgxEnclave) -> Result<(), InterpreterError> {
+                             enclave_id : u64) -> Result<(), InterpreterError> {
     // Make a SgxWasmAction::Register structure and send it to sgx_enclave_wasm_invoke
     let req = SgxWasmAction::Register{
         name : name,
         as_name : as_name,
     };
     let sign_msg = sign_msg(serde_json::to_string(&req).unwrap(), privkey);
-
     let result = sgx_enclave_wasm_invoke(sign_msg,
                                          MAXOUTPUT,
-                                         enclave);
+                                         enclave_id);
 
     match result {
         (_, sgx_status_t::SGX_SUCCESS) => {
@@ -403,7 +398,7 @@ fn sgx_enclave_wasm_register(name : Option<String>,
     }
 }
 
-fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxEnclave) -> Result<(), String> {
+fn wasm_main_loop(wast_file: &str, privkey: &sgx_rsa3072_key_t, enclave_id: u64) -> Result<(), String> {
     // ScriptParser interface has changed. Need to feed it with wast content.
     let wast_content = match std::fs::read(wast_file) {
         Ok(content) => content,
@@ -429,13 +424,13 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             CommandKind::Module { name, module, .. } => {
                 // println!("module: {:?}", &module);
                 // let name = Some(String::from("test"));
-                sgx_enclave_wasm_load_module (module.into_vec(), &name, privkey, enclave)?;
+                sgx_enclave_wasm_load_module (module.into_vec(), &name, privkey, enclave_id)?;
                 println!("load module - success at line {}", line)
             },
 
             CommandKind::AssertReturn { action, expected } => {
                 // println!("expected: {:?}", &expected);
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave_id);
                 match result {
                     Ok(result) => {
                         let spec_expected = expected.iter()
@@ -468,7 +463,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
 
             CommandKind::AssertReturnCanonicalNan { action }
             | CommandKind::AssertReturnArithmeticNan { action } => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave_id);
                 match result {
                     Ok(result) => {
                         for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
@@ -493,7 +488,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             },
 
             CommandKind::AssertExhaustion { action, .. } => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave_id);
                 match result {
                     Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
                     Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
@@ -502,7 +497,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
 
             CommandKind::AssertTrap { action, .. } => {
                 println!("Enter AssertTrap!");
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave_id);
                 match result {
                     Ok(result) => {
                         panic!("Expected action to result in a trap, got result: {:?}", result);
@@ -517,7 +512,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             | CommandKind::AssertMalformed { module, .. }
             | CommandKind::AssertUnlinkable { module, .. } => {
                 // Malformed
-                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey, enclave);
+                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey, enclave_id);
                 match module_load {
                     Ok(_) => panic!("Expected invalid module definition, got some module!"),
                     Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
@@ -525,7 +520,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             },
 
             CommandKind::AssertUninstantiable { module, .. } => {
-                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey,  enclave);
+                let module_load = sgx_enclave_wasm_try_load(&module.into_vec(), privkey,  enclave_id);
                 match module_load {
                     Ok(_) => panic!("Expected error running start function at line {}", line),
                     Err(e) => println!("assert_uninstantiable - success ({:?})", e),
@@ -533,7 +528,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             },
 
             CommandKind::Register { name, as_name, .. } => {
-                let result = sgx_enclave_wasm_register(name, as_name, privkey, enclave);
+                let result = sgx_enclave_wasm_register(name, as_name, privkey, enclave_id);
                 match result {
                     Ok(_) => {println!("register - success at line {}", line)},
                     Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
@@ -541,7 +536,7 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
             },
 
             CommandKind::PerformAction(action) => {
-                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave);
+                let result:Result<Option<RuntimeValue>, InterpreterError> = sgx_enclave_wasm_run_action(&action, privkey, enclave_id);
                 match result {
                     Ok(_) => {println!("invoke - success at line {}", line)},
                     Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
@@ -553,8 +548,8 @@ fn wasm_main_loop(wast_file : &str, privkey: &sgx_rsa3072_key_t, enclave : &SgxE
     Ok(())
 }
 
-fn run_a_wast(enclave   : &SgxEnclave,
-              wast_file : &str,
+fn run_a_wast(enclave_id: u64,
+              wast_file: &str,
               privkey: &sgx_rsa3072_key_t) -> Result<(), String> {
     let mut retval = sgx_status_t::SGX_SUCCESS;
 
@@ -563,9 +558,9 @@ fn run_a_wast(enclave   : &SgxEnclave,
     // sgx_enclave_wasm_init(enclave)?;
 
     // Step 2: Load the wast file and run
-    wasm_main_loop(wast_file, privkey, enclave)?;
+    wasm_main_loop(wast_file, privkey, enclave_id)?;
     // examine the modules in enclave
-    unsafe {examine_module(enclave.geteid(), &mut retval);}
+    unsafe {examine_module(enclave_id, &mut retval);}
 
     Ok(())
 }
@@ -649,172 +644,18 @@ fn sha256_u(input: &str) -> [u8;32] {
 
 fn sign_msg(msg: String, privkey: &sgx_rsa3072_key_t) -> Option<(String, sgx_rsa3072_signature_t, [u8;32])> {
     let hash = sha256_u(msg.as_str());
-    // sign the sha256 hash by rsa3072 private key
-    let signature = match rsgx_rsa3072_sign_slice(&hash, privkey) {
-        Ok(sig) => {sig},
-        Err(err) => {
-            println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
-            return None;
-        }
-    };
-    Some((msg, signature, hash))
-}
-
-fn main() {
-    let mut args: Vec<_> = env::args().collect();
-    let mut sign_type = sgx_quote_sign_type_t::SGX_LINKABLE_SIGNATURE;
-    args.remove(0);
-    while !args.is_empty() {
-        match args.remove(0).as_ref() {
-            "--unlink" => sign_type = sgx_quote_sign_type_t::SGX_UNLINKABLE_SIGNATURE,
-            _ => {
-                panic!("Only --unlink is accepted");
-            }
-        }
-    }
-
-    let enclave = match init_enclave() {
-        Ok(r) => {
-            println!("[+] Init Enclave Successful {}!", r.geteid());
-            r
-        },
-        Err(x) => {
-            println!("[-] Init Enclave Failed {}!", x.as_str());
-            return;
-        },
-    };
-    let eid = enclave.geteid();
+    // // sign the sha256 hash by rsa3072 private key
+    // let signature = match rsgx_rsa3072_sign_slice(&hash, privkey) {
+    //     Ok(sig) => {sig},
+    //     Err(err) => {
+    //         println!("[-] rsgx_rsa3072_sign_slice function fail: {}", err.as_str());
+    //         return None;
+    //     }
+    // };
     
-    // Init the sgxwasm spec driver engine
-    match sgx_enclave_wasm_init(&enclave) {
-        Ok(()) => {
-            println!("[+] Sgxwasm Spec Driver Engine Init Success!")
-        },
-        Err(x) => {
-            println!("{}", x);
-        }
-    }
-
-    println!("Running as server...");
-    let listener = TcpListener::bind("0.0.0.0:3443").unwrap();
-
-    // let mut result_vec:Vec<u8> = vec![0; MAXOUTPUT];
-    // let result_slice = &mut result_vec[..];
-
-    match listener.accept() {
-        Ok((socket, addr)) => {
-            println!("new client from {:?}", addr);
-            let mut retval = sgx_status_t::SGX_SUCCESS;
-            let result = unsafe {
-                run_server(eid, &mut retval, socket.as_raw_fd(), sign_type)
-            };
-            match result {
-                sgx_status_t::SGX_SUCCESS => {
-                    println!("Ecall run_server success!");
-                },
-                _ => {
-                    println!("[-] ECALL run_server Failed {}!", result.as_str());
-                    return;
-                }
-            }
-        }
-        Err(e) => println!("couldn't get client: {:?}", e),
-    }
-
-    // // We need to trim all trailing '\0's before conver to string
-    // let mut result_vec:Vec<u8> = result_slice.to_vec();
-    // result_vec.retain(|x| *x != 0x00u8);
-    // let mut wast_file = String::new();
-
-    // // Now result_vec only includes essential chars
-    // if result_vec.len() != 0 {
-    //     wast_file = String::from_utf8(result_vec).unwrap().trim().to_string();
-    // } else {
-    //     println!("[-] result_vec is empty");
-    // }
-    // println!("wasm file: {}", wast_file);
-
-
-    // // create rsa3072 public key and private key
-    // let mut pubkey = sgx_rsa3072_public_key_t::default();
-    // let mut privkey = sgx_rsa3072_key_t::default();
-    // println!("Input rsa key file: ");
-    // let mut key_file = String::new();
-    // std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
-    // key_file = key_file.trim().to_string();
-    // match fs::File::open(&key_file) {
-    //     Ok(mut file) => {
-    //         let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
-    //         let mut e = [0_u8; 4];
-    //         let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
-    //         file.read(&mut n).unwrap();
-    //         file.read(&mut e).unwrap();
-    //         file.read(&mut d).unwrap();
-    //         pubkey.modulus = n;
-    //         pubkey.exponent = e;
-    //         privkey.modulus = n;
-    //         privkey.d = d;
-    //         privkey.e = e;
-    //     },
-    //     Err(_e) => {
-    //         if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
-    //             println!("[-] generate_rsa_keypair function fail!");
-    //             enclave.destroy();
-    //             println!("\n[+] Destroy Enclave {}", eid);
-    //             return;
-    //         } else {
-    //             println!("[+] create rsa key pair success!");
-    //         }
-    //     }
-    // };
-
-    // // upload rsa3072 key pair to enclave
-    // let mut retval = sgx_status_t::SGX_SUCCESS;
-    // let result = unsafe{
-    //     upload_key(eid, &mut retval, &privkey, &pubkey)
-    // };
-    // match result {
-    //     sgx_status_t::SGX_SUCCESS => {
-    //         println!("[+] upload_key function success!");
-    //     },
-    //     _ => {
-    //         println!("[-] upload_key function fail: {}", result.as_str());
-    //     }
-    // };
-
-    // wast_file = format!("../test_input/{}.wast", wast_file);
-    // println!("======================= testing {} =====================", &wast_file);
-    // match run_a_wast(&enclave, &wast_file, &privkey) {
-    //     Ok(()) => {},
-    //     Err(x) => {
-    //         println!("{}", x);
-    //     }
-    // };
-
-    // loop {
-    //     // println!("Input wast file name: ");
-    //     let mut wast_file = String::new();
-    //     // std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
-    //     // wast_file = wast_file.trim().to_string();
-    //     if wast_file.eq("exit") {
-    //         break;
-    //     }
-    //     wast_file = format!("../test_input/{}.wast", wast_file);
-    //     println!("======================= testing {} =====================", &wast_file);
-    //     match run_a_wast(&enclave, &wast_file, &privkey) {
-    //         Ok(()) => {},
-    //         Err(x) => {
-    //             println!("{}", x);
-    //         }
-    //     };
-    // }
-
-    enclave.destroy();
-    println!("\n[+] Enclave destroy success! {}", eid);
-
-    return;
+    // Some((msg, signature, hash))
+    Some((msg, sgx_rsa3072_signature_t::default(), hash))
 }
-
 
 #[no_mangle]
 pub extern "C"
@@ -910,21 +751,171 @@ fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
 }
 
 #[no_mangle]
-pub extern "C" fn ocall_run_wast (wast_name: *const u8, name_len: usize) -> sgx_status_t {
+pub extern "C" fn ocall_load_wast (wast_name: *const u8, name_len: usize) -> sgx_status_t {
     let name_slice = unsafe { slice::from_raw_parts(wast_name, name_len) };
     let mut name = String::new();
     for ch in name_slice.iter() {
-        name.push(*ch as char);
+        // println!("ch: {}", ch);
+        if *ch != 0x00u8 {
+           name.push(*ch as char); 
+        }
     }
-    // println!("ocall_run_wast print: {}", name);
+    // println!("ocall_load_wast print: {}", name);
     name = format!("../test_input/{}.wast", name);
     println!("======================= testing {} =====================", &name);
 
-    // match run_a_wast(&enclave, &name, &privkey) {
+    let privkey = sgx_rsa3072_key_t::default();
+
+    sgx_status_t::SGX_SUCCESS
+}
+
+fn main() {
+    let mut args: Vec<_> = env::args().collect();
+    let mut sign_type = sgx_quote_sign_type_t::SGX_LINKABLE_SIGNATURE;
+    args.remove(0);
+    while !args.is_empty() {
+        match args.remove(0).as_ref() {
+            "--unlink" => sign_type = sgx_quote_sign_type_t::SGX_UNLINKABLE_SIGNATURE,
+            _ => {
+                panic!("Only --unlink is accepted");
+            }
+        }
+    }
+
+    let enclave = match init_enclave() {
+        Ok(r) => {
+            println!("[+] Init Enclave Successful {}!", r.geteid());
+            r
+        },
+        Err(x) => {
+            println!("[-] Init Enclave Failed {}!", x.as_str());
+            return;
+        },
+    };
+    let eid = enclave.geteid();
+    
+    // Init the sgxwasm spec driver engine
+    match sgx_enclave_wasm_init(&enclave) {
+        Ok(()) => {
+            println!("[+] Sgxwasm Spec Driver Engine Init Success!")
+        },
+        Err(x) => {
+            println!("{}", x);
+        }
+    }
+
+    println!("Running as server...");
+    let listener = TcpListener::bind("0.0.0.0:3443").unwrap();
+
+    // let mut result_vec:Vec<u8> = vec![0; MAXOUTPUT];
+    // let result_slice = &mut result_vec[..];
+
+    match listener.accept() {
+        Ok((socket, addr)) => {
+            println!("new client from {:?}", addr);
+            let mut retval = sgx_status_t::SGX_SUCCESS;
+            let result = unsafe {
+                run_server(eid, &mut retval, socket.as_raw_fd(), sign_type)
+            };
+            match result {
+                sgx_status_t::SGX_SUCCESS => {
+                    println!("Ecall run_server success!");
+                },
+                _ => {
+                    println!("[-] ECALL run_server Failed {}!", result.as_str());
+                    return;
+                }
+            }
+        }
+        Err(e) => println!("couldn't get client: {:?}", e),
+    }
+
+    // // We need to trim all trailing '\0's before conver to string
+    // let mut result_vec:Vec<u8> = result_slice.to_vec();
+    // result_vec.retain(|x| *x != 0x00u8);
+    // let mut wast_file = String::new();
+    // // Now result_vec only includes essential chars
+    // if result_vec.len() != 0 {
+    //     wast_file = String::from_utf8(result_vec).unwrap().trim().to_string();
+    // } else {
+    //     println!("[-] result_vec is empty");
+    // }
+    // println!("wasm file: {}", wast_file);
+
+    // // create rsa3072 public key and private key
+    // let mut pubkey = sgx_rsa3072_public_key_t::default();
+    // let mut privkey = sgx_rsa3072_key_t::default();
+    // println!("Input rsa key file: ");
+    // let mut key_file = String::new();
+    // std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
+    // key_file = key_file.trim().to_string();
+    // match fs::File::open(&key_file) {
+    //     Ok(mut file) => {
+    //         let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
+    //         let mut e = [0_u8; 4];
+    //         let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
+    //         file.read(&mut n).unwrap();
+    //         file.read(&mut e).unwrap();
+    //         file.read(&mut d).unwrap();
+    //         pubkey.modulus = n;
+    //         pubkey.exponent = e;
+    //         privkey.modulus = n;
+    //         privkey.d = d;
+    //         privkey.e = e;
+    //     },
+    //     Err(_e) => {
+    //         if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
+    //             println!("[-] generate_rsa_keypair function fail!");
+    //             enclave.destroy();
+    //             println!("\n[+] Destroy Enclave {}", eid);
+    //             return;
+    //         } else {
+    //             println!("[+] create rsa key pair success!");
+    //         }
+    //     }
+    // };
+    // // upload rsa3072 key pair to enclave
+    // let mut retval = sgx_status_t::SGX_SUCCESS;
+    // let result = unsafe{
+    //     upload_key(eid, &mut retval, &privkey, &pubkey)
+    // };
+    // match result {
+    //     sgx_status_t::SGX_SUCCESS => {
+    //         println!("[+] upload_key function success!");
+    //     },
+    //     _ => {
+    //         println!("[-] upload_key function fail: {}", result.as_str());
+    //     }
+    // };
+
+    // wast_file = format!("../test_input/{}.wast", wast_file);
+    // println!("======================= testing {} =====================", &wast_file);
+    // match run_a_wast(&enclave, &wast_file, &privkey) {
     //     Ok(()) => {},
     //     Err(x) => {
     //         println!("{}", x);
     //     }
     // };
-    sgx_status_t::SGX_SUCCESS
+    // loop {
+    //     // println!("Input wast file name: ");
+    //     let mut wast_file = String::new();
+    //     // std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
+    //     // wast_file = wast_file.trim().to_string();
+    //     if wast_file.eq("exit") {
+    //         break;
+    //     }
+    //     wast_file = format!("../test_input/{}.wast", wast_file);
+    //     println!("======================= testing {} =====================", &wast_file);
+    //     match run_a_wast(&enclave, &wast_file, &privkey) {
+    //         Ok(()) => {},
+    //         Err(x) => {
+    //             println!("{}", x);
+    //         }
+    //     };
+    // }
+
+    enclave.destroy();
+    println!("\n[+] Enclave destroy success! {}", eid);
+
+    return;
 }

@@ -93,7 +93,7 @@ extern "C" {
                 p_quote            : *mut u8,
                 maxlen             : u32,
                 p_quote_len        : *mut u32) -> sgx_status_t;
-    pub fn ocall_run_wast (ret_val: *mut sgx_status_t, wast_name: *const u8, name_len: usize) -> sgx_status_t;
+    pub fn ocall_load_wast (ret_val: *mut sgx_status_t, wast_name: *const u8, name_len: usize) -> sgx_status_t;
 }
 
 lazy_static!{
@@ -208,21 +208,21 @@ pub extern "C"
 fn sgxwasm_run_action(hash: &[u8; 32], signature: &sgx_rsa3072_signature_t,
                       req_bin : *const u8, req_length: usize,
                       result_bin : *mut u8, result_max_len: usize) -> sgx_status_t {
-    let pubkey = PUBLIC_KEY.lock().unwrap().clone();
-    let result = rsa_verify(hash, &pubkey, signature);
-    match result {
-        sgx_status_t::SGX_SUCCESS => {
-            println!("[+] signature verified success!");
-        },
-        sgx_status_t::SGX_ERROR_UNEXPECTED => {
-            println!("[-] signature verified fail!");
-            return sgx_status_t::SGX_ERROR_UNEXPECTED;
-        },
-        _ => {
-            println!("[-] rsa_verify function fail: {}", result.as_str());
-            return result;
-        }
-    };
+    // let pubkey = PUBLIC_KEY.lock().unwrap().clone();
+    // let result = rsa_verify(hash, &pubkey, signature);
+    // match result {
+    //     sgx_status_t::SGX_SUCCESS => {
+    //         println!("[+] signature verified success!");
+    //     },
+    //     sgx_status_t::SGX_ERROR_UNEXPECTED => {
+    //         println!("[-] signature verified fail!");
+    //         return sgx_status_t::SGX_ERROR_UNEXPECTED;
+    //     },
+    //     _ => {
+    //         println!("[-] rsa_verify function fail: {}", result.as_str());
+    //         return result;
+    //     }
+    // };
 
     let req_slice = unsafe { slice::from_raw_parts(req_bin, req_length) };
     let action_req: sgxwasm::SgxWasmAction = serde_json::from_slice(req_slice).unwrap();
@@ -748,7 +748,7 @@ fn get_ias_api_key() -> String {
 }
 
 #[no_mangle]
-pub extern "C" fn run_server(socket_fd : c_int, sign_type: sgx_quote_sign_type_t) -> sgx_status_t {
+pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t) -> sgx_status_t {
     // Generate Keypair
     let ecc_handle = SgxEccHandle::new();
     let _result = ecc_handle.open();
@@ -794,20 +794,25 @@ pub extern "C" fn run_server(socket_fd : c_int, sign_type: sgx_quote_sign_type_t
     loop {
         println!("Server running...");
         let mut plaintext = [0u8;1024];
-        // let mut flag = false;
 
         match tls.read(&mut plaintext) {
             Ok(_) => {
-                let msg = str::from_utf8(&plaintext).unwrap().trim();
+                let mut msg = String::new();
+                for ch in plaintext.iter() {
+                    if *ch != 0x00u8 {
+                        msg.push(*ch as char);
+                    }
+                }
                 println!("Client said: {}", msg);
-                // // what the hell is the msg????
-                // if msg == "exit" {
-                //     println!("break");
-                // }
+                if msg == "exit" {
+                    println!("break");
+                    tls.write_all("end".as_bytes()).unwrap();
+                    break;
+                }
 
                 let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
                 let result = unsafe {
-                    ocall_run_wast(
+                    ocall_load_wast(
                         &mut ret_val as *mut sgx_status_t, 
                         msg.to_string().as_ptr() as *const u8, 
                         msg.len())
