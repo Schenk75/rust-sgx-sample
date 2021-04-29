@@ -162,11 +162,16 @@ TWINE論文
 4/21
 
 - 完善wasmi-ra代碼：
-  - step1：服務端一直循環監聽
+  - step1：服務端一直循環監聽客戶端，客戶端輸入exit兩端都結束進程
+  - step2：客戶端發送需要執行的wast腳本到enclave，enclave執行
+    - upload模式：enclave擁有者經過認證後發送序列化後的wast腳本到enclave，enclave執行（保存功能還沒做）
+    - test模式：測試test_input目錄下的所有wast文件（待更正：部分文件不能通過測試，已經注釋掉【原因可能在於server接收了client傳來的字符串後將所有0x00去掉，而有的模塊內部含有0x00】）
 
 ---------
 
 
+
+step?：實現Ocall函數 `ocall_load_wast` ，根據客戶端輸入的wast文件名，在Enclave外讀取wast文件，並進行parse，最後加載進Enclave（先不考慮籤名、數據密封等操作）
 
 
 

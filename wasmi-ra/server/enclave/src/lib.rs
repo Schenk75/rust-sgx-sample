@@ -314,6 +314,81 @@ fn sgxwasm_run_action(hash: &[u8; 32], signature: &sgx_rsa3072_signature_t,
     }
 }
 
+fn wasm_run_action(req: &str) -> Result<String, ()> {
+    let action_req: sgxwasm::SgxWasmAction = serde_json::from_str(req).unwrap();
+    let response;
+    let return_status;
+
+    match action_req {
+        sgxwasm::SgxWasmAction::Invoke{module,field,args}=> {
+            let args = args.into_iter()
+                           .map(|x| boundary_value_to_runtime_value(x))
+                           .collect::<Vec<RuntimeValue>>();
+            let r = wasm_invoke(module, field, args);
+            let r = result_covert(r);
+            response = serde_json::to_string(&r).unwrap();
+            match r {
+                Ok(_) => {
+                    return_status = sgx_status_t::SGX_SUCCESS;
+                },
+                Err(_) => {
+                    return_status = sgx_status_t::SGX_ERROR_WASM_INTERPRETER_ERROR;
+               }
+            }
+        },
+        sgxwasm::SgxWasmAction::Get{module,field} => {
+            let r = wasm_get(module, field);
+            let r = result_covert(r);
+            response = serde_json::to_string(&r).unwrap();
+            match r {
+                Ok(_v) => {
+                    return_status = sgx_status_t::SGX_SUCCESS;
+                },
+                Err(_x) => {
+                    return_status = sgx_status_t::SGX_ERROR_WASM_INTERPRETER_ERROR;
+                }
+            }
+        },
+        sgxwasm::SgxWasmAction::LoadModule{name,module} => {
+            let r = wasm_load_module(name.clone(), module);
+            response = serde_json::to_string(&r).unwrap();
+            match r {
+                Ok(_) => {
+                    return_status = sgx_status_t::SGX_SUCCESS;
+                },
+                Err(_x) => {
+                    return_status = sgx_status_t::SGX_ERROR_WASM_LOAD_MODULE_ERROR;
+                }
+            }
+        },
+        sgxwasm::SgxWasmAction::TryLoad{module} => {
+            let r = wasm_try_load(module);
+            response = serde_json::to_string(&r).unwrap();
+            match r {
+                Ok(()) => {
+                    return_status = sgx_status_t::SGX_SUCCESS;
+                },
+                Err(_x) => {
+                    return_status = sgx_status_t::SGX_ERROR_WASM_TRY_LOAD_ERROR;
+                }
+            }
+        },
+        sgxwasm::SgxWasmAction::Register{name, as_name} => {
+            let r = wasm_register(&name, as_name.clone());
+            response = serde_json::to_string(&r).unwrap();
+            match r {
+                Ok(()) => {
+                    return_status = sgx_status_t::SGX_SUCCESS;
+                },
+                Err(_x) => {
+                    return_status = sgx_status_t::SGX_ERROR_WASM_REGISTER_ERROR;
+                }
+            }
+        }
+    }
+
+    Ok(response)
+}
 
 /// take a look at the module instances in the driver
 #[no_mangle]
@@ -791,46 +866,81 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
     let mut conn = TcpStream::new(socket_fd).unwrap();
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    loop {
-        println!("Server running...");
-        let mut plaintext = [0u8;1024];
-
-        match tls.read(&mut plaintext) {
-            Ok(_) => {
-                let mut msg = String::new();
-                for ch in plaintext.iter() {
-                    if *ch != 0x00u8 {
-                        msg.push(*ch as char);
-                    }
+    // read mode
+    let mut buf = [0u8; 1024];
+    let mut mode = String::new();
+    match tls.read(&mut buf) {
+        Ok(_) => {
+            for ch in buf.iter() {
+                if *ch != 0x00 {
+                    mode.push(*ch as char);
                 }
-                println!("Client said: {}", msg);
-                if msg == "exit" {
-                    println!("break");
-                    tls.write_all("end".as_bytes()).unwrap();
-                    break;
-                }
-
-                let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
-                let result = unsafe {
-                    ocall_load_wast(
-                        &mut ret_val as *mut sgx_status_t, 
-                        msg.to_string().as_ptr() as *const u8, 
-                        msg.len())
-                };
-                match result {
-                    sgx_status_t::SGX_SUCCESS => {},
-                    _ => {
-                        println!("[-] ocall_run_wast fail: {}", result.as_str());
-                    }
-                }
-            },
-            Err(e) => {
-                println!("Error in read_to_end: {:?}", e);
-                break;
             }
-        };
+        },
+        Err(e) => {
+            println!("Error in read mode: {:?}", e);
+        }
+    }
 
-        tls.write_all("server hello".as_bytes()).unwrap();
+    match mode.as_str() {
+        "upload" | "test" => {
+            println!("Client mode: {}", &mode);
+            loop {
+                println!("Server running...");
+                let mut plaintext = [0u8;4096];
+
+                match tls.read(&mut plaintext) {
+                    Ok(_) => {
+                        let mut msg = String::new();
+                        for ch in plaintext.iter() {
+                            if *ch != 0x00u8 {
+                                msg.push(*ch as char);
+                            }
+                        }
+                        // println!("Client said: {}", msg);
+                        if msg == "exit" {
+                            // println!("break");
+                            tls.write_all("end".as_bytes()).unwrap();
+                            break;
+                        }
+    
+                        // run the action provided by the client
+                        let ret_str = match wasm_run_action(&msg) {
+                            Ok(result) => result,
+                            Err(_) => {
+                                println!("[-] wasm_run_action fail");
+                                break;
+                            }
+                        };
+                        tls.write_all(ret_str.as_bytes()).unwrap();
+                    },
+                    Err(e) => {
+                        println!("Error in read_to_end: {:?}", e);
+                        break;
+                    }
+                };
+                examine_module();
+            }
+            
+            
+        },
+        _ => {
+            println!("Err");
+            // let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
+            // let result = unsafe {
+            //     ocall_load_wast(
+            //         &mut ret_val as *mut sgx_status_t, 
+            //         msg.to_string().as_ptr() as *const u8, 
+            //         msg.len())
+            // };
+            // match result {
+            //     sgx_status_t::SGX_SUCCESS => {},
+            //     _ => {
+            //         println!("[-] ocall_run_wast fail: {}", result.as_str());
+            //     }
+            // }
+        
+        }
     }
     
     sgx_status_t::SGX_SUCCESS

@@ -750,6 +750,7 @@ fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
     }
 }
 
+
 #[no_mangle]
 pub extern "C" fn ocall_load_wast (wast_name: *const u8, name_len: usize) -> sgx_status_t {
     let name_slice = unsafe { slice::from_raw_parts(wast_name, name_len) };
@@ -763,8 +764,6 @@ pub extern "C" fn ocall_load_wast (wast_name: *const u8, name_len: usize) -> sgx
     // println!("ocall_load_wast print: {}", name);
     name = format!("../test_input/{}.wast", name);
     println!("======================= testing {} =====================", &name);
-
-    let privkey = sgx_rsa3072_key_t::default();
 
     sgx_status_t::SGX_SUCCESS
 }

@@ -9,11 +9,17 @@ webpki      = "0.21"
 rustls      = { version = "0.16", features = ["dangerous_configuration"] }
 itertools   = "*"
 sgx_types   = { git = "https://github.com/apache/teaclave-sgx-sdk" }
+sgx_ucrypto = { git = "https://github.com/apache/teaclave-sgx-sdk" }
 base64      = "0.9.2"
 serde_json  = "1.0"
 num-bigint  = "*"
 bit-vec     = "*"
 hex         = "*"
+wabt        = "0.9"
+serde       = {version = "1.0"}
+serde_derive = {version = "1.0"}
+nan-preserving-float = "0.1.0"
 
 [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 sgx_types = { path = "../../../sgx_types" }
+sgx_ucrypto = { path = "../../../sgx_ucrypto" }
