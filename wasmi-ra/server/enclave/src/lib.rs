@@ -887,20 +887,30 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
             println!("Client mode: {}", &mode);
             loop {
                 println!("Server running...");
-                let mut plaintext = [0u8;4096];
 
-                match tls.read(&mut plaintext) {
-                    Ok(_) => {
-                        let mut msg = String::new();
-                        for ch in plaintext.iter() {
-                            if *ch != 0x00u8 {
-                                msg.push(*ch as char);
-                            }
+                let text_len = 4096;
+                let mut msg = String::new();
+                let mut exit_flag = false;
+                let mut plaintext = [0u8;4096];
+                while let Ok(len) = tls.read(&mut plaintext) {
+                    // count the successive '}'
+                    let mut cnt = 0;
+                    for ch in plaintext.iter() {
+                        if *ch == 125 {
+                            cnt += 1;
+                        } else {
+                            cnt = 0;
                         }
+                        // println!("u8:{}  char:{}", *ch, *ch as char);
+                        msg.push(*ch as char);
+                        if cnt == 2 {break;}
+                    }
+                    if len < text_len {
                         // println!("Client said: {}", msg);
-                        if msg == "exit" {
+                        if msg.starts_with("exit") {
                             // println!("break");
                             tls.write_all("end".as_bytes()).unwrap();
+                            exit_flag = true;
                             break;
                         }
     
@@ -913,13 +923,11 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                             }
                         };
                         tls.write_all(ret_str.as_bytes()).unwrap();
-                    },
-                    Err(e) => {
-                        println!("Error in read_to_end: {:?}", e);
                         break;
                     }
-                };
+                }
                 examine_module();
+                if exit_flag {break;}
             }
             
             

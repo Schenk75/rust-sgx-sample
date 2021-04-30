@@ -165,7 +165,8 @@ TWINE論文
   - step1：服務端一直循環監聽客戶端，客戶端輸入exit兩端都結束進程
   - step2：客戶端發送需要執行的wast腳本到enclave，enclave執行
     - upload模式：enclave擁有者經過認證後發送序列化後的wast腳本到enclave，enclave執行（保存功能還沒做）
-    - test模式：測試test_input目錄下的所有wast文件（待更正：部分文件不能通過測試，已經注釋掉【原因可能在於server接收了client傳來的字符串後將所有0x00去掉，而有的模塊內部含有0x00】）
+    - test模式：測試test_input目錄下的所有wast文件（待更正：names.wast跑不通）【之前的錯誤是由於server端buffer長度不夠讀取所有client發送的字節流，現在改爲循環讀取】
+  - step3：
 
 ---------
 
