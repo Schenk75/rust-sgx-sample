@@ -61,6 +61,7 @@ use std::io::{Write, Read, BufReader};
 use std::untrusted::fs;
 use std::vec::Vec;
 use itertools::Itertools;
+use std::sgxfs::SgxFile;
 
 extern crate wasmi;
 extern crate sgxwasm;
@@ -93,7 +94,9 @@ extern "C" {
                 p_quote            : *mut u8,
                 maxlen             : u32,
                 p_quote_len        : *mut u32) -> sgx_status_t;
-    pub fn ocall_load_wast (ret_val: *mut sgx_status_t, wast_name: *const u8, name_len: usize) -> sgx_status_t;
+    pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, wasm_name: *const u8, name_len: usize) -> sgx_status_t;
+    pub fn ocall_store_wasm (ret_val: *mut sgx_status_t, wasm: *const u8, len: usize, 
+                            file_name: *const u8, name_len: usize) -> sgx_status_t;
 }
 
 lazy_static!{
@@ -905,15 +908,41 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                         msg.push(*ch as char);
                         if cnt == 2 {break;}
                     }
+
+                    // the end of the text by client
                     if len < text_len {
                         // println!("Client said: {}", msg);
+
+                        // exit the program
                         if msg.starts_with("exit") {
                             // println!("break");
                             tls.write_all("end".as_bytes()).unwrap();
                             exit_flag = true;
                             break;
                         }
-    
+
+                        // write to file (only in mode upload)
+                        if &mode == "upload" {
+                            let file_name = "test".to_string();
+
+                            let mut retval = sgx_status_t::SGX_SUCCESS;
+                            let result = unsafe {
+                                ocall_store_wasm(
+                                    &mut retval as *mut sgx_status_t,
+                                    msg.as_ptr() as *const u8, 
+                                    msg.len(),
+                                    file_name.as_ptr() as *const u8,
+                                    file_name.len())
+                            };
+                            match result {
+                                sgx_status_t::SGX_SUCCESS => {},
+                                _ => {
+                                    println!("[-] ocall_store_wasm Failed {}!", result.as_str());
+                                    break;
+                                }
+                            }
+                        }
+
                         // run the action provided by the client
                         let ret_str = match wasm_run_action(&msg) {
                             Ok(result) => result,

@@ -752,18 +752,28 @@ fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
 
 
 #[no_mangle]
-pub extern "C" fn ocall_load_wast (wast_name: *const u8, name_len: usize) -> sgx_status_t {
-    let name_slice = unsafe { slice::from_raw_parts(wast_name, name_len) };
-    let mut name = String::new();
-    for ch in name_slice.iter() {
-        // println!("ch: {}", ch);
-        if *ch != 0x00u8 {
-           name.push(*ch as char); 
-        }
-    }
-    // println!("ocall_load_wast print: {}", name);
-    name = format!("../test_input/{}.wast", name);
-    println!("======================= testing {} =====================", &name);
+pub extern "C" fn ocall_load_wasm (wasm_name: *const u8, name_len: usize) -> sgx_status_t {
+
+    sgx_status_t::SGX_SUCCESS
+}
+
+#[no_mangle]
+pub extern "C" fn ocall_store_wasm (wasm: *const u8, len: usize, file_name: *const u8, name_len: usize) -> sgx_status_t {
+    let str_slice = unsafe { slice::from_raw_parts(wasm, len) };
+    let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
+    // let mut wasm_str = String::new();
+
+    // for ch in str_slice.iter() {
+    //     wasm_str.push(*ch as char);
+    // }
+    let wasm_str = std::str::from_utf8(str_slice).unwrap();
+    let file_name = std::str::from_utf8(file_name_slice).unwrap();
+
+    println!("store wasm_str: {}", wasm_str);
+    println!("file name: {}", file_name);
+
+    let mut file = fs::File::create(format!("./storage/{}", file_name)).expect("create file failed");
+    file.write_all(wasm_str.as_bytes()).expect("write file failed");
 
     sgx_status_t::SGX_SUCCESS
 }

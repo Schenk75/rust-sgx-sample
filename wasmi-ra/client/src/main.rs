@@ -316,6 +316,8 @@ fn main() {
             {
                 println!("Line : {}", line);
 
+                // input file name
+
                 match kind {
                     CommandKind::Module { name, module, .. } => {
                         let script = match wasm_load_module(module.into_vec(), &name) {

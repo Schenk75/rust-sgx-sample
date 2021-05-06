@@ -27,10 +27,10 @@ extern {
                             sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
     fn verify_sealeddata_for_fixed(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
                             sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
-    // fn create_sealeddata_for_serializable(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
-    //                         sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
-    // fn verify_sealeddata_for_serializable(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
-    //                         sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
+    fn create_sealeddata_for_serializable(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
+                            sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
+    fn verify_sealeddata_for_serializable(eid: sgx_enclave_id_t, retval: *mut sgx_status_t,
+                            sealed_log: * mut u8, sealed_log_size: u32) -> sgx_status_t;
 }
 
 fn init_enclave() -> SgxResult<SgxEnclave> {
@@ -62,17 +62,56 @@ fn main() {
     let mut retval = sgx_status_t::SGX_SUCCESS;
 
     let sealed_log_size: u32 = 1024;
-    let sealed_log: [u8; 1024] = [0_u8; 1024];
+    // let sealed_log: [u8; 1024] = [0_u8; 1024];
+    let sealed_log = "sealed_log".to_string();
+    let sealed_log = sealed_log.as_bytes().to_owned();
+    // let sealed_log_size = sealed_log.len() as u32;
+
+    // // seal data
+    // let result = unsafe{
+    //     create_sealeddata_for_fixed(
+    //         enclave.geteid(),
+    //         &mut retval,
+    //         sealed_log.as_ptr() as * mut u8,
+    //         sealed_log_size)
+    // };
+    // match result {
+    //     sgx_status_t::SGX_SUCCESS => {},
+    //     _ => {
+    //         println!("[-] ECALL Enclave Failed {}!", result.as_str());
+    //         return;
+    //     }
+    // }
+
+    // // unseal data
+    // let result = unsafe {
+    //     verify_sealeddata_for_fixed(
+    //         enclave.geteid(),
+    //         &mut retval,
+    //         sealed_log.as_ptr() as * mut u8,
+    //         sealed_log_size
+    //     )
+    // };
+    // match result {
+    //     sgx_status_t::SGX_SUCCESS => {
+    //         println!("verify_sealeddata_for_fixed success ...");
+    //     },
+    //     _ => {
+    //         println!("[-] ECALL Enclave Failed {}!", result.as_str());
+    //         return;
+    //     }
+    // }
+
+
 
     // seal data
     let result = unsafe{
-        create_sealeddata_for_fixed(
+        create_sealeddata_for_serializable(
             enclave.geteid(),
             &mut retval,
             sealed_log.as_ptr() as * mut u8,
             sealed_log_size)
     };
-
     match result {
         sgx_status_t::SGX_SUCCESS => {},
         _ => {
@@ -83,23 +122,23 @@ fn main() {
 
     // unseal data
     let result = unsafe {
-        verify_sealeddata_for_fixed(
+        verify_sealeddata_for_serializable(
             enclave.geteid(),
             &mut retval,
             sealed_log.as_ptr() as * mut u8,
             sealed_log_size
         )
     };
-
     match result {
         sgx_status_t::SGX_SUCCESS => {
-            println!("verify_sealeddata_for_fixed success ...");
+            println!("verify_sealeddata_for_serializable success ...");
         },
         _ => {
             println!("[-] ECALL Enclave Failed {}!", result.as_str());
             return;
         }
     }
+
 
     println!("[+] test success...");
     enclave.destroy();

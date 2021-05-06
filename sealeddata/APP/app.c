@@ -204,6 +204,9 @@ int SGX_CDECL main(int argc, char *argv[])
     memset(sealed_log, 0, sizeof(sealed_log));
     sealed_log_size = 1024;
 
+
+
+
      sgx_ret = create_sealeddata_for_serializable(global_eid, &enclave_ret, sealed_log, sealed_log_size);
      if(sgx_ret != SGX_SUCCESS) {
         print_error_message(sgx_ret);
