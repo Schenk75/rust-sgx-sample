@@ -167,7 +167,7 @@ TWINE論文
     - upload模式：enclave擁有者經過認證後發送序列化後的wast腳本到enclave，enclave執行
     - test模式：測試test_input目錄下的所有wast文件（待更正：names.wast跑不通）【之前的錯誤是由於server端buffer長度不夠讀取所有client發送的字節流，現在改爲循環讀取】
   - step3：在upload模式中，將傳進Enclave的json持久化到本地，使用一個Ocall將字符串傳遞到非安全區（密封功能、文件自己命名功能未完成）
-  - step4：根據客戶端輸入的文件名，讀取(並解封)在Enclave外的文件內的wasm模塊的json字符串，加載進Enclave
+  - step4：實現Ocall函數 `ocall_load_wast`，根據客戶端輸入的文件名，讀取(並解封)在Enclave外的文件內的wasm模塊的json字符串，加載進Enclave
 
 ---------
 
@@ -175,8 +175,6 @@ TWINE論文
 
 #### todo
 
-1. 在upload模式中，將傳進Enclave的json經過密封後保存
-2. 實現Ocall函數 `ocall_load_wast` ，根據客戶端輸入的文件名，讀取並解封在Enclave外的文件內的wasm模塊的json字符串，加載進Enclave
 3. 客戶端對模塊進行籤名，服務端驗證籤名後才將模塊加載到driver中並持久化保存（最好使用證書中的公私鑰重新實現）
 4. 驗證代碼的完整性（還沒想好技術方案）
 5. 對於沒有指定CA籤發的證書的用戶，即非Enclave擁有者，如何建立TLS通信（暫時考慮使用不同的CA籤發證書）（這一部分不一定要實現）

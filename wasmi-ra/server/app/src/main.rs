@@ -31,7 +31,7 @@ mod wasm_def;
 use wasm_def::{RuntimeValue, Error as InterpreterError};
 use wabt::script::{Action, Command, CommandKind, ScriptParser, Value};
 use std::os::unix::io::{IntoRawFd, AsRawFd};
-use std::{fs, env, slice};
+use std::{fs, env, slice, ptr};
 use std::io::prelude::*;
 use std::net::{TcpListener, TcpStream, SocketAddr};
 
@@ -752,20 +752,34 @@ fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
 
 
 #[no_mangle]
-pub extern "C" fn ocall_load_wasm (wasm_name: *const u8, name_len: usize) -> sgx_status_t {
+pub extern "C" fn ocall_load_wasm (wasm: *mut u8, len: usize, file_name: *const u8, name_len: usize) -> sgx_status_t {
+    let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
+    let file_name = format!("./storage/{}", std::str::from_utf8(file_name_slice).unwrap());
 
-    sgx_status_t::SGX_SUCCESS
+    let mut file = fs::File::open(file_name).unwrap();
+    let mut contents = String::new();
+    file.read_to_string(&mut contents).unwrap();
+
+    // println!("contents: {} length: {}", contents, contents.len());
+    if contents.len() < len {
+        unsafe {
+            ptr::copy_nonoverlapping(contents.as_ptr(),
+                                     wasm,
+                                     contents.len());
+        }
+        return sgx_status_t::SGX_SUCCESS;
+    } else {
+        return sgx_status_t::SGX_ERROR_WASM_BUFFER_TOO_SHORT;
+    }
+
+    
 }
 
 #[no_mangle]
 pub extern "C" fn ocall_store_wasm (wasm: *const u8, len: usize, file_name: *const u8, name_len: usize) -> sgx_status_t {
     let str_slice = unsafe { slice::from_raw_parts(wasm, len) };
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
-    // let mut wasm_str = String::new();
 
-    // for ch in str_slice.iter() {
-    //     wasm_str.push(*ch as char);
-    // }
     let wasm_str = std::str::from_utf8(str_slice).unwrap();
     let file_name = std::str::from_utf8(file_name_slice).unwrap();
 

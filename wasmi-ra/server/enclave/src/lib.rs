@@ -94,7 +94,8 @@ extern "C" {
                 p_quote            : *mut u8,
                 maxlen             : u32,
                 p_quote_len        : *mut u32) -> sgx_status_t;
-    pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, wasm_name: *const u8, name_len: usize) -> sgx_status_t;
+    pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, wasm: *mut u8, len: usize,
+                            file_name: *const u8, name_len: usize) -> sgx_status_t;
     pub fn ocall_store_wasm (ret_val: *mut sgx_status_t, wasm: *const u8, len: usize, 
                             file_name: *const u8, name_len: usize) -> sgx_status_t;
 }
@@ -957,10 +958,81 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                 }
                 examine_module();
                 if exit_flag {break;}
-            }
-            
-            
+            } 
         },
+
+        "load" => {
+            println!("Client mode: {}", &mode);
+            loop {
+                println!("Server running...");
+
+                let mut file_name = String::new();
+                let mut plaintext = [0u8;64];
+
+                match tls.read(&mut plaintext) {
+                    Ok(_) => {
+                        for ch in plaintext.iter() {
+                            if *ch != 0x00 {
+                                file_name.push(*ch as char);
+                            }
+                        }
+                    },
+                    Err(e) => {
+                        println!("[-] Error read tls: {:?}", e);
+                        break;
+                    }
+                }
+
+                println!("wasm file name in enclave: {}", file_name);
+                // exit the program
+                if file_name.starts_with("exit") {
+                    // println!("break");
+                    tls.write_all("end".as_bytes()).unwrap();
+                    break;
+                }
+
+                // read wasm file through ocall
+                let mut ret_val = sgx_status_t::SGX_SUCCESS;
+                let mut wasm_vec: Vec<u8> = vec![0; 8192];
+                let wasm_slice = &mut wasm_vec[..];
+                let result = unsafe {
+                    ocall_load_wasm(
+                        &mut ret_val as *mut sgx_status_t, 
+                        wasm_slice.as_mut_ptr(),
+                        8192, 
+                        file_name.as_ptr() as *const u8, 
+                        file_name.len())
+                };
+                match result {
+                    sgx_status_t::SGX_SUCCESS => {},
+                    _ => {
+                        println!("[-] ocall_load_wasm Failed {}!", result.as_str());
+                        break;
+                    }
+                }
+                
+                let mut wasm = String::new();
+                // println!("wasm_slice: {:?}", wasm_slice);
+                for ch in wasm_slice.iter() {
+                    if *ch != 0x00 {
+                        wasm.push(*ch as char);
+                    }
+                }
+                // println!("wasm to load: {}", wasm);
+
+                // run action
+                let ret_str = match wasm_run_action(&wasm) {
+                    Ok(result) => result,
+                    Err(_) => {
+                        println!("[-] wasm_run_action fail");
+                        break;
+                    }
+                };
+                tls.write_all(ret_str.as_bytes()).unwrap();
+                examine_module();
+            }
+        },
+
         _ => {
             println!("Err");
             // let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;

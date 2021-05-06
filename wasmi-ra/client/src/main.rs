@@ -239,18 +239,20 @@ fn wasm_register(name: Option<String>, as_name: String) -> Option<String> {
 fn main() {
     let mut args: Vec<_> = env::args().collect();
     // mode=1: client upload wabt json to enclave and enclave run commands
+    // mode=2: client input the wasm module name stored in romote server, server read the file and run commands
     // mode=9: test all wast files in test_input folder
     let mut mode = 0;
     args.remove(0);
     while !args.is_empty() {
         match args.remove(0).as_ref() {
             "--upload" | "-u" => mode = 1,
+            "--load" | "-l" => mode = 2,
             "--test" | "-t" => mode = 9,
             _ => {}
         }
     }
     if mode == 0 {
-        panic!("Choose a mode: <--upload>");
+        panic!("Choose a mode: <--upload / --load / --test>");
     }
 
     println!("Starting wasmi-ra-client");
@@ -735,33 +737,56 @@ fn main() {
         }
     } 
 
-    // owner run wast stored in remote device
+    // client run wasm module stored in remote device
     else if mode == 2 {
+        // send mode to server
+        tls.write_all("load".as_bytes()).unwrap();
+
         loop {
-            println!("Write msg: ");
+            println!("Load wasm file name: ");
             let mut msg = String::new();
             std::io::stdin().read_line(&mut msg).expect("Failed to read line");
             msg = msg.trim().to_string();
+
+            // if user enter "exit", close the connection
+            if msg == "exit" {
+                tls.write_all("exit".as_bytes()).unwrap();
+                let mut plaintext = [0u8;1024];
+                match tls.read(&mut plaintext) {
+                    Ok(_) => {
+                        println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+                    }
+                    Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                        println!("EOF (tls)");
+                    }
+                    Err(e) => println!("Error in read_to_end: {:?}", e),
+                }
+                break;
+            }
         
-            // do the verification in this step (by sth like constructor?)
             match tls.write_all(msg.as_bytes()) {
                 Ok(_) => {},
                 Err(x) => {
                     println!("[-] TLS write msg error: {}", x);
                 }
             };
-        
-            let mut plaintext = [0u8;1024];
+
+            // receive response from server
+            let mut plaintext = [0u8;4096];
+            let mut res_str = String::new();
             match tls.read(&mut plaintext) {
                 Ok(_) => {
-                    println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+                    for ch in plaintext.iter() {
+                        if *ch != 0x00 {res_str.push(*ch as char);}
+                    }
+                    println!("Server replied: {}", &res_str);
                 }
                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                     println!("EOF (tls)");
                 }
                 Err(e) => println!("Error in read_to_end: {:?}", e),
             }
-            if msg.eq("exit") {break;}
+            if msg.starts_with("exit") {break;}
         }
     }
     
