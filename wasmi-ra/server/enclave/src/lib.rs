@@ -1034,7 +1034,7 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
         },
 
         _ => {
-            println!("Err");
+            println!("Err mode");
             // let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
             // let result = unsafe {
             //     ocall_load_wast(
