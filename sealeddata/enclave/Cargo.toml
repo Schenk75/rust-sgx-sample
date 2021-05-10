@@ -20,6 +20,7 @@ sgx_rand = { git = "https://github.com/apache/teaclave-sgx-sdk.git" }
 serde = { git = "https://github.com/mesalock-linux/serde-sgx" }
 serde_derive = { git = "https://github.com/mesalock-linux/serde-sgx" }
 serde_cbor = { git = "https://github.com/mesalock-linux/cbor-sgx" }
+serde_json = { git = "https://github.com/mesalock-linux/serde-json-sgx" }
 
 [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 sgx_alloc = { path = "../../../sgx_alloc" }

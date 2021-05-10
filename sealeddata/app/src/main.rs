@@ -62,10 +62,7 @@ fn main() {
     let mut retval = sgx_status_t::SGX_SUCCESS;
 
     let sealed_log_size: u32 = 1024;
-    // let sealed_log: [u8; 1024] = [0_u8; 1024];
-    let sealed_log = "sealed_log".to_string();
-    let sealed_log = sealed_log.as_bytes().to_owned();
-    // let sealed_log_size = sealed_log.len() as u32;
+    let sealed_log: [u8; 1024] = [0_u8; 1024];
 
     // // seal data
     // let result = unsafe{

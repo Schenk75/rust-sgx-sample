@@ -23,6 +23,7 @@
 
 extern crate sgx_types;
 extern crate sgx_tcrypto;
+extern crate sgx_tseal;
 extern crate sgx_tse;
 extern crate sgx_rand;
 #[cfg(not(target_env = "sgx"))]
@@ -62,6 +63,7 @@ use std::untrusted::fs;
 use std::vec::Vec;
 use itertools::Itertools;
 use std::sgxfs::SgxFile;
+use sgx_tseal::{SgxSealedData};
 
 extern crate wasmi;
 extern crate sgxwasm;
@@ -94,9 +96,9 @@ extern "C" {
                 p_quote            : *mut u8,
                 maxlen             : u32,
                 p_quote_len        : *mut u32) -> sgx_status_t;
-    pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, wasm: *mut u8, len: usize,
+    pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, sealed_log: &mut [u8; 4096],
                             file_name: *const u8, name_len: usize) -> sgx_status_t;
-    pub fn ocall_store_wasm (ret_val: *mut sgx_status_t, wasm: *const u8, len: usize, 
+    pub fn ocall_store_wasm (ret_val: *mut sgx_status_t, sealed_log: &[u8; 4096],
                             file_name: *const u8, name_len: usize) -> sgx_status_t;
 }
 
@@ -926,12 +928,29 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                         if &mode == "upload" {
                             let file_name = "test".to_string();
 
+                            // seal data
+                            let sealed_log: [u8; 4096] = [0; 4096];
+                            let sealed_log_size = sealed_log.len() as u32;
+                            let aad: [u8; 0] = [0_u8; 0];
+                            let result = SgxSealedData::<[u8]>::seal_data(&aad, msg.as_bytes());
+                            let sealed_data = match result {
+                                Ok(x) => x,
+                                Err(ret) => { return ret; },
+                            };
+                            let opt = unsafe {
+                                sealed_data.to_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
+                            };
+                            if opt.is_none() {
+                                return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
+                            }
+                            // println!("sealed data: {:?}", sealed_log);
+
+                            // store sealed data to file
                             let mut retval = sgx_status_t::SGX_SUCCESS;
                             let result = unsafe {
                                 ocall_store_wasm(
                                     &mut retval as *mut sgx_status_t,
-                                    msg.as_ptr() as *const u8, 
-                                    msg.len(),
+                                    &sealed_log,
                                     file_name.as_ptr() as *const u8,
                                     file_name.len())
                             };
@@ -993,13 +1012,12 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
 
                 // read wasm file through ocall
                 let mut ret_val = sgx_status_t::SGX_SUCCESS;
-                let mut wasm_vec: Vec<u8> = vec![0; 8192];
-                let wasm_slice = &mut wasm_vec[..];
+                let mut sealed_log: [u8; 4096] = [0; 4096];
+                let sealed_log_size = sealed_log.len() as u32;
                 let result = unsafe {
                     ocall_load_wasm(
                         &mut ret_val as *mut sgx_status_t, 
-                        wasm_slice.as_mut_ptr(),
-                        8192, 
+                        &mut sealed_log,
                         file_name.as_ptr() as *const u8, 
                         file_name.len())
                 };
@@ -1011,14 +1029,31 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                     }
                 }
                 
+                // unseal data
+                let opt = unsafe {
+                    SgxSealedData::<[u8]>::from_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
+                };
+                let sealed_data = match opt {
+                    Some(x) => x,
+                    None => {
+                        return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
+                    },
+                };
+                let result = sealed_data.unseal_data();
+                let unsealed_data = match result {
+                    Ok(x) => x,
+                    Err(ret) => {
+                        return ret;
+                    },
+                };
+                let encoded_slice = unsealed_data.get_decrypt_txt();
                 let mut wasm = String::new();
-                // println!("wasm_slice: {:?}", wasm_slice);
-                for ch in wasm_slice.iter() {
+                for ch in encoded_slice {
                     if *ch != 0x00 {
                         wasm.push(*ch as char);
                     }
                 }
-                // println!("wasm to load: {}", wasm);
+                // println!("wasm to load: {}", wasm);                
 
                 // run action
                 let ret_str = match wasm_run_action(&wasm) {

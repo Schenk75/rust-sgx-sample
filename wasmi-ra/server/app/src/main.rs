@@ -752,42 +752,26 @@ fn ocall_get_update_info (platform_blob: * const sgx_platform_info_t,
 
 
 #[no_mangle]
-pub extern "C" fn ocall_load_wasm (wasm: *mut u8, len: usize, file_name: *const u8, name_len: usize) -> sgx_status_t {
+pub extern "C" fn ocall_load_wasm (sealed_log: &mut [u8; 4096], file_name: *const u8, name_len: usize) -> sgx_status_t {
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
     let file_name = format!("./storage/{}", std::str::from_utf8(file_name_slice).unwrap());
 
     let mut file = fs::File::open(file_name).unwrap();
-    let mut contents = String::new();
-    file.read_to_string(&mut contents).unwrap();
+    let _ = file.read(sealed_log);
 
-    // println!("contents: {} length: {}", contents, contents.len());
-    if contents.len() < len {
-        unsafe {
-            ptr::copy_nonoverlapping(contents.as_ptr(),
-                                     wasm,
-                                     contents.len());
-        }
-        return sgx_status_t::SGX_SUCCESS;
-    } else {
-        return sgx_status_t::SGX_ERROR_WASM_BUFFER_TOO_SHORT;
-    }
-
-    
+    sgx_status_t::SGX_SUCCESS
 }
 
 #[no_mangle]
-pub extern "C" fn ocall_store_wasm (wasm: *const u8, len: usize, file_name: *const u8, name_len: usize) -> sgx_status_t {
-    let str_slice = unsafe { slice::from_raw_parts(wasm, len) };
+pub extern "C" fn ocall_store_wasm (sealed_log: &[u8; 4096], file_name: *const u8, name_len: usize) -> sgx_status_t {
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
 
-    let wasm_str = std::str::from_utf8(str_slice).unwrap();
     let file_name = std::str::from_utf8(file_name_slice).unwrap();
 
-    println!("store wasm_str: {}", wasm_str);
     println!("file name: {}", file_name);
 
     let mut file = fs::File::create(format!("./storage/{}", file_name)).expect("create file failed");
-    file.write_all(wasm_str.as_bytes()).expect("write file failed");
+    file.write_all(sealed_log).expect("write file failed");
 
     sgx_status_t::SGX_SUCCESS
 }
