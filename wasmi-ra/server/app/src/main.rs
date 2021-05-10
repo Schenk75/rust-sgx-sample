@@ -660,8 +660,9 @@ fn sign_msg(msg: String, privkey: &sgx_rsa3072_key_t) -> Option<(String, sgx_rsa
 #[no_mangle]
 pub extern "C"
 fn ocall_sgx_init_quote(ret_ti: *mut sgx_target_info_t,
-                        ret_gid : *mut sgx_epid_group_id_t) -> sgx_status_t {
-    println!("Entering ocall_sgx_init_quote");
+                        ret_gid : *mut sgx_epid_group_id_t,
+                        print_log: u8) -> sgx_status_t {
+    if print_log == 1 {println!("Entering ocall_sgx_init_quote");}
     unsafe {sgx_init_quote(ret_ti, ret_gid)}
 }
 
@@ -701,10 +702,11 @@ fn ocall_get_quote (p_sigrl            : *const u8,
                     p_nonce            : *const sgx_quote_nonce_t,
                     p_qe_report        : *mut sgx_report_t,
                     p_quote            : *mut u8,
-                    _maxlen             : u32,
-                    p_quote_len        : *mut u32) -> sgx_status_t {
-    println!("Entering ocall_get_quote");
-
+                    _maxlen            : u32,
+                    p_quote_len        : *mut u32,
+                    print_log          : u8) -> sgx_status_t {
+    if print_log == 1 {println!("Entering ocall_get_quote");}
+    
     let mut real_quote_len : u32 = 0;
 
     let ret = unsafe {
@@ -712,11 +714,11 @@ fn ocall_get_quote (p_sigrl            : *const u8,
     };
 
     if ret != sgx_status_t::SGX_SUCCESS {
-        println!("sgx_calc_quote_size returned {}", ret);
+        if print_log == 1 {println!("sgx_calc_quote_size returned {}", ret);}
         return ret;
     }
 
-    println!("quote size = {}", real_quote_len);
+    if print_log == 1 {println!("quote size = {}", real_quote_len);}
     unsafe { *p_quote_len = real_quote_len; }
 
     let ret = unsafe {
@@ -729,14 +731,14 @@ fn ocall_get_quote (p_sigrl            : *const u8,
                       p_qe_report,
                       p_quote as *mut sgx_quote_t,
                       real_quote_len)
-        };
+    };
 
     if ret != sgx_status_t::SGX_SUCCESS {
-        println!("sgx_calc_quote_size returned {}", ret);
+        if print_log == 1 {println!("sgx_calc_quote_size returned {}", ret);}
         return ret;
     }
 
-    println!("sgx_calc_quote_size returned {}", ret);
+    if print_log == 1 {println!("sgx_calc_quote_size returned {}", ret);}
     ret
 }
 

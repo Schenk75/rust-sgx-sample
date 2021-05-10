@@ -169,7 +169,7 @@ TWINE論文
   - step3：在upload模式中，將傳進Enclave的json持久化到本地，使用一個Ocall將字符串傳遞到非安全區（文件自己命名功能未完成）
   - step4：實現Ocall函數 `ocall_load_wast`，根據客戶端輸入的文件名，讀取並解封在Enclave外的文件內的wasm模塊的json字符串，加載進Enclave
   - step5：加入數據密封 - upload模式時加密持久化，load模式時解封加載到enclave中
-  - step6：加入check模式，獲取enclave的report用於驗證代碼完整性（先僅考慮把能把report導出，不考慮後續怎麼驗證完整性）
+  - step6：加入check模式，獲取enclave的report用於驗證代碼完整性（先僅考慮把能把report導出，不考慮後續怎麼驗證完整性）(能讀取到，不知道對不對，沒有傳送到client)
   - step7：其他用戶的認證管理
 
 ---------

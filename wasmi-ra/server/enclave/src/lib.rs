@@ -82,7 +82,8 @@ pub const CERTEXPIRYDAYS: i64 = 90i64;
 extern "C" {
     pub fn ocall_sgx_init_quote ( ret_val : *mut sgx_status_t,
                   ret_ti  : *mut sgx_target_info_t,
-                  ret_gid : *mut sgx_epid_group_id_t) -> sgx_status_t;
+                  ret_gid : *mut sgx_epid_group_id_t,
+                  print_log: u8) -> sgx_status_t;
     pub fn ocall_get_ias_socket ( ret_val : *mut sgx_status_t,
                   ret_fd  : *mut i32) -> sgx_status_t;
     pub fn ocall_get_quote (ret_val            : *mut sgx_status_t,
@@ -95,7 +96,8 @@ extern "C" {
                 p_qe_report        : *mut sgx_report_t,
                 p_quote            : *mut u8,
                 maxlen             : u32,
-                p_quote_len        : *mut u32) -> sgx_status_t;
+                p_quote_len        : *mut u32,
+                print_log          : u8) -> sgx_status_t;
     pub fn ocall_load_wasm (ret_val: *mut sgx_status_t, sealed_log: &mut [u8; 4096],
                             file_name: *const u8, name_len: usize) -> sgx_status_t;
     pub fn ocall_store_wasm (ret_val: *mut sgx_status_t, sealed_log: &[u8; 4096],
@@ -418,12 +420,12 @@ pub extern "C" fn upload_key(privkey: &sgx_rsa3072_key_t, pubkey: &sgx_rsa3072_p
 }
 
 
-fn parse_response_attn_report(resp : &[u8]) -> (String, String, String){
-    println!("parse_response_attn_report");
+fn parse_response_attn_report(resp : &[u8], print_log: bool) -> (String, String, String){
+    if print_log {println!("parse_response_attn_report");}
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut respp   = httparse::Response::new(&mut headers);
     let result = respp.parse(resp);
-    println!("parse result {:?}", result);
+    if print_log {println!("parse result {:?}", result);}
 
     let msg : &'static str;
 
@@ -439,7 +441,7 @@ fn parse_response_attn_report(resp : &[u8]) -> (String, String, String){
         _ => {println!("DBG:{}", respp.code.unwrap()); msg = "Unknown error occured"},
     }
 
-    println!("{}", msg);
+    if print_log {println!("{}", msg);}
     let mut len_num : u32 = 0;
 
     let mut sig = String::new();
@@ -453,7 +455,7 @@ fn parse_response_attn_report(resp : &[u8]) -> (String, String, String){
             "Content-Length" => {
                 let len_str = String::from_utf8(h.value.to_vec()).unwrap();
                 len_num = len_str.parse::<u32>().unwrap();
-                println!("content length = {}", len_num);
+                if print_log {println!("content length = {}", len_num);}
             }
             "X-IASReport-Signature" => sig = str::from_utf8(h.value).unwrap().to_string(),
             "X-IASReport-Signing-Certificate" => cert = str::from_utf8(h.value).unwrap().to_string(),
@@ -471,20 +473,23 @@ fn parse_response_attn_report(resp : &[u8]) -> (String, String, String){
         let header_len = result.unwrap().unwrap();
         let resp_body = &resp[header_len..];
         attn_report = str::from_utf8(resp_body).unwrap().to_string();
-        println!("Attestation report: {}", attn_report);
+        if print_log {println!("Attestation report: {}", attn_report);}
     }
 
     // len_num == 0
     (attn_report, sig, sig_cert)
 }
 
-fn parse_response_sigrl(resp : &[u8]) -> Vec<u8> {
-    println!("parse_response_sigrl");
+fn parse_response_sigrl(resp : &[u8], print_log: bool) -> Vec<u8> {
+    if print_log {println!("parse_response_sigrl");}
     let mut headers = [httparse::EMPTY_HEADER; 16];
     let mut respp   = httparse::Response::new(&mut headers);
     let result = respp.parse(resp);
-    println!("parse result {:?}", result);
-    println!("parse response{:?}", respp);
+    if print_log {
+        println!("parse result {:?}", result);
+        println!("parse response{:?}", respp);  
+    }
+    
 
     let msg : &'static str;
 
@@ -500,7 +505,7 @@ fn parse_response_sigrl(resp : &[u8]) -> Vec<u8> {
         _ => msg = "Unknown error occured",
     }
 
-    println!("{}", msg);
+    if print_log {println!("{}", msg);}
     let mut len_num : u32 = 0;
 
     for i in 0..respp.headers.len() {
@@ -508,14 +513,14 @@ fn parse_response_sigrl(resp : &[u8]) -> Vec<u8> {
         if h.name == "content-length" {
             let len_str = String::from_utf8(h.value.to_vec()).unwrap();
             len_num = len_str.parse::<u32>().unwrap();
-            println!("content length = {}", len_num);
+            if print_log {println!("content length = {}", len_num);}
         }
     }
 
     if len_num != 0 {
         let header_len = result.unwrap().unwrap();
         let resp_body = &resp[header_len..];
-        println!("Base64-encoded SigRL: {:?}", resp_body);
+        if print_log {println!("Base64-encoded SigRL: {:?}", resp_body);}
 
         return base64::decode(str::from_utf8(resp_body).unwrap()).unwrap();
     }
@@ -532,18 +537,18 @@ pub fn make_ias_client_config() -> rustls::ClientConfig {
     config
 }
 
-pub fn get_sigrl_from_intel(fd : c_int, gid : u32) -> Vec<u8> {
-    println!("get_sigrl_from_intel fd = {:?}", fd);
+pub fn get_sigrl_from_intel(fd: c_int, gid: u32, print_log: bool) -> Vec<u8> {
+    if print_log {println!("get_sigrl_from_intel fd = {:?}", fd);}
     let config = make_ias_client_config();
     let ias_key = get_ias_api_key();
 
-let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Key: {}\r\nConnection: Close\r\n\r\n",
+    let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Key: {}\r\nConnection: Close\r\n\r\n",
                         SIGRL_SUFFIX,
                         gid,
                         DEV_HOSTNAME,
                         ias_key);
 
-    println!("{}", req);
+    if print_log {println!("{}", req);}
 
     let dns_name = webpki::DNSNameRef::try_from_ascii_str(DEV_HOSTNAME).unwrap();
     let mut sess = rustls::ClientSession::new(&Arc::new(config), dns_name);
@@ -553,7 +558,7 @@ let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Ke
     let _result = tls.write(req.as_bytes());
     let mut plaintext = Vec::new();
 
-    println!("write complete");
+    if print_log {println!("write complete");}
 
     match tls.read_to_end(&mut plaintext) {
         Ok(_) => (),
@@ -562,17 +567,17 @@ let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Ke
             panic!("haha");
         }
     }
-    println!("read_to_end complete");
+    if print_log {println!("read_to_end complete");}
     let resp_string = String::from_utf8(plaintext.clone()).unwrap();
 
-    println!("{}", resp_string);
+    if print_log {println!("{}", resp_string);}
 
-    parse_response_sigrl(&plaintext)
+    parse_response_sigrl(&plaintext, print_log)
 }
 
 // TODO: support pse
-pub fn get_report_from_intel(fd : c_int, quote : Vec<u8>) -> (String, String, String) {
-    println!("get_report_from_intel fd = {:?}", fd);
+pub fn get_report_from_intel(fd : c_int, quote : Vec<u8>, print_log: bool) -> (String, String, String) {
+    if print_log {println!("get_report_from_intel fd = {:?}", fd);}
     let config = make_ias_client_config();
     let encoded_quote = base64::encode(&quote[..]);
     let encoded_json = format!("{{\"isvEnclaveQuote\":\"{}\"}}\r\n", encoded_quote);
@@ -585,7 +590,7 @@ pub fn get_report_from_intel(fd : c_int, quote : Vec<u8>) -> (String, String, St
                            encoded_json.len(),
                            encoded_json);
 
-    println!("{}", req);
+    if print_log {println!("{}", req);}
     let dns_name = webpki::DNSNameRef::try_from_ascii_str(DEV_HOSTNAME).unwrap();
     let mut sess = rustls::ClientSession::new(&Arc::new(config), dns_name);
     let mut sock = TcpStream::new(fd).unwrap();
@@ -594,15 +599,15 @@ pub fn get_report_from_intel(fd : c_int, quote : Vec<u8>) -> (String, String, St
     let _result = tls.write(req.as_bytes());
     let mut plaintext = Vec::new();
 
-    println!("write complete");
+    if print_log {println!("write complete");}
 
     tls.read_to_end(&mut plaintext).unwrap();
-    println!("read_to_end complete");
+    if print_log {println!("read_to_end complete");}
     let resp_string = String::from_utf8(plaintext.clone()).unwrap();
 
-    println!("resp_string = {}", resp_string);
+    if print_log {println!("resp_string = {}", resp_string);}
 
-    let (attn_report, sig, cert) = parse_response_attn_report(&plaintext);
+    let (attn_report, sig, cert) = parse_response_attn_report(&plaintext, print_log);
 
     (attn_report, sig, cert)
 }
@@ -615,7 +620,9 @@ fn as_u32_le(array: &[u8; 4]) -> u32 {
 }
 
 #[allow(const_err)]
-pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quote_sign_type_t) -> Result<(String, String, String), sgx_status_t> {
+pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quote_sign_type_t, print_log: bool) -> Result<(String, String, String), sgx_status_t> {
+    let mut print_log_u8: u8 = 0;
+    if print_log {print_log_u8 = 1;}
     // Workflow:
     // (1) ocall to get the target_info structure (ti) and epid group id (eg)
     // (1.5) get sigrl
@@ -630,10 +637,12 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     let res = unsafe {
         ocall_sgx_init_quote(&mut rt as *mut sgx_status_t,
                              &mut ti as *mut sgx_target_info_t,
-                             &mut eg as *mut sgx_epid_group_id_t)
+                             &mut eg as *mut sgx_epid_group_id_t,
+                             print_log_u8)
     };
 
-    println!("eg = {:?}", eg);
+    if print_log {println!("eg = {:?}", eg);}
+    
 
     if res != sgx_status_t::SGX_SUCCESS {
         return Err(res);
@@ -664,7 +673,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     //println!("Got ias_sock = {}", ias_sock);
 
     // Now sigrl_vec is the revocation list, a vec<u8>
-    let sigrl_vec : Vec<u8> = get_sigrl_from_intel(ias_sock, eg_num);
+    let sigrl_vec : Vec<u8> = get_sigrl_from_intel(ias_sock, eg_num, print_log);
 
     // (2) Generate the report
     // Fill ecc256 public key into report_data
@@ -678,7 +687,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
 
     let rep = match rsgx_create_report(&ti, &report_data) {
         Ok(r) =>{
-            println!("Report creation => success {:?}", r.body.mr_signer.m);
+            if print_log {println!("Report creation => success {:?}", r.body.mr_signer.m);}
             Some(r)
         },
         Err(e) =>{
@@ -690,7 +699,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     let mut quote_nonce = sgx_quote_nonce_t { rand : [0;16] };
     let mut os_rng = os::SgxRng::new().unwrap();
     os_rng.fill_bytes(&mut quote_nonce.rand);
-    println!("rand finished");
+    if print_log {println!("rand finished");}
     let mut qe_report = sgx_report_t::default();
     const RET_QUOTE_BUF_LEN : u32 = 2048;
     let mut return_quote_buf : [u8; RET_QUOTE_BUF_LEN as usize] = [0;RET_QUOTE_BUF_LEN as usize];
@@ -736,7 +745,8 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
                     p_qe_report,
                     p_quote,
                     maxlen,
-                    p_quote_len)
+                    p_quote_len,
+                    print_log_u8)
     };
 
     if result != sgx_status_t::SGX_SUCCESS {
@@ -750,7 +760,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     // Added 09-28-2018
     // Perform a check on qe_report to verify if the qe_report is valid
     match rsgx_verify_report(&qe_report) {
-        Ok(()) => println!("rsgx_verify_report passed!"),
+        Ok(()) => if print_log {println!("rsgx_verify_report passed!")},
         Err(x) => {
             println!("rsgx_verify_report failed with {:?}", x);
             return Err(x);
@@ -765,7 +775,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(sgx_status_t::SGX_ERROR_UNEXPECTED);
     }
 
-    println!("qe_report check passed");
+    if print_log {println!("qe_report check passed");}
 
     // Debug
     // for i in 0..quote_len {
@@ -787,15 +797,17 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
     let rhs_hash = rsgx_sha256_slice(&rhs_vec[..]).unwrap();
     let lhs_hash = &qe_report.body.report_data.d[..32];
 
-    println!("rhs hash = {:02X}", rhs_hash.iter().format(""));
-    println!("report hs= {:02X}", lhs_hash.iter().format(""));
+    if print_log {
+        println!("rhs hash = {:02X}", rhs_hash.iter().format(""));
+        println!("report hs= {:02X}", lhs_hash.iter().format(""));
+    }
 
     if rhs_hash != lhs_hash {
-        println!("Quote is tampered!");
+        if print_log {println!("Quote is tampered!");}
         return Err(sgx_status_t::SGX_ERROR_UNEXPECTED);
     }
 
-    let quote_vec : Vec<u8> = return_quote_buf[..quote_len as usize].to_vec();
+    let quote_vec: Vec<u8> = return_quote_buf[..quote_len as usize].to_vec();
     let res = unsafe {
         ocall_get_ias_socket(&mut rt as *mut sgx_status_t,
                              &mut ias_sock as *mut i32)
@@ -809,7 +821,7 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(rt);
     }
 
-    let (attn_report, sig, cert) = get_report_from_intel(ias_sock, quote_vec);
+    let (attn_report, sig, cert) = get_report_from_intel(ias_sock, quote_vec, print_log);
     Ok((attn_report, sig, cert))
 }
 
@@ -835,7 +847,7 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
     let _result = ecc_handle.open();
     let (prv_k, pub_k) = ecc_handle.create_key_pair().unwrap();
 
-    let (attn_report, sig, cert) = match create_attestation_report(&pub_k, sign_type) {
+    let (attn_report, sig, cert) = match create_attestation_report(&pub_k, sign_type, true) {
         Ok(r) => r,
         Err(e) => {
             println!("Error in create_attestation_report: {:?}", e);
@@ -1067,6 +1079,20 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                 examine_module();
             }
         },
+
+        "check" => {
+            let (check_report, check_sig, check_cert) = match create_attestation_report(&pub_k, sign_type, false) {
+                Ok(r) => r,
+                Err(e) => {
+                    println!("Error in create_attestation_report: {:?}", e);
+                    return e;
+                }
+            };
+            println!();
+            println!("check_report: {}", &check_report);
+            println!("check_sig: {}", &check_sig);
+            println!("check_cert: {}", &check_cert);
+        }
 
         _ => {
             println!("Err mode");

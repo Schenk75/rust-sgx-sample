@@ -240,6 +240,7 @@ fn main() {
     let mut args: Vec<_> = env::args().collect();
     // mode=1: client upload wabt json to enclave and enclave run commands
     // mode=2: client input the wasm module name stored in romote server, server read the file and run commands
+    // mode=3: check the integrity of code in enclave by getting the report
     // mode=9: test all wast files in test_input folder
     let mut mode = 0;
     args.remove(0);
@@ -247,15 +248,16 @@ fn main() {
         match args.remove(0).as_ref() {
             "--upload" | "-u" => mode = 1,
             "--load" | "-l" => mode = 2,
+            "--check" | "-c" => mode = 3,
             "--test" | "-t" => mode = 9,
             _ => {}
         }
     }
     if mode == 0 {
-        panic!("Choose a mode: <--upload / --load / --test>");
+        panic!("Choose a mode: <--upload / --load / --check / --test>");
     }
 
-    println!("Starting wasmi-ra-client");
+    println!("Starting wasmi-ra-client, mode {}", mode);
     println!("Connecting to {}", SERVERADDR);
 
     let client_config = make_config();
@@ -790,6 +792,12 @@ fn main() {
         }
     }
     
+    // check the integrity of code in enclave by getting the report
+    else if mode == 3 {
+        // send mode to server
+        tls.write_all("check".as_bytes()).unwrap();
+    }
+
     // test all wast files in test_input folder
     else if mode == 9 {
         // send mode to server
