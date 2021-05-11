@@ -73,9 +73,11 @@ fn make_config() -> rustls::ClientConfig {
     let mut config = rustls::ClientConfig::new();
 
     let client_cert = include_bytes!("../../cert/client.crt");
+    // let client_cert = include_bytes!("../../cert/otherclient.crt");
     let mut cc_reader = BufReader::new(&client_cert[..]);
 
     let client_pkcs8_key = include_bytes!("../../cert/client.pkcs8");
+    // let client_pkcs8_key = include_bytes!("../../cert/otherclient.pkcs8");
     let mut client_key_reader = BufReader::new(&client_pkcs8_key[..]);
 
     let certs = rustls::internal::pemfile::certs(&mut cc_reader).unwrap();
@@ -237,27 +239,24 @@ fn wasm_register(name: Option<String>, as_name: String) -> Option<String> {
 
 
 fn main() {
-    let mut args: Vec<_> = env::args().collect();
-    // mode=1: client upload wabt json to enclave and enclave run commands
-    // mode=2: client input the wasm module name stored in romote server, server read the file and run commands
-    // mode=3: check the integrity of code in enclave by getting the report
-    // mode=9: test all wast files in test_input folder
-    let mut mode = 0;
-    args.remove(0);
-    while !args.is_empty() {
-        match args.remove(0).as_ref() {
-            "--upload" | "-u" => mode = 1,
-            "--load" | "-l" => mode = 2,
-            "--check" | "-c" => mode = 3,
-            "--test" | "-t" => mode = 9,
-            _ => {}
-        }
-    }
-    if mode == 0 {
-        panic!("Choose a mode: <--upload / --load / --check / --test>");
-    }
+    // let mut args: Vec<_> = env::args().collect();
 
-    println!("Starting wasmi-ra-client, mode {}", mode);
+    // let mut mode = 0;
+    // args.remove(0);
+    // while !args.is_empty() {
+    //     match args.remove(0).as_ref() {
+    //         "--upload" | "-u" => mode = 1,
+    //         "--load" | "-l" => mode = 2,
+    //         "--check" | "-c" => mode = 3,
+    //         "--test" | "-t" => mode = 9,
+    //         _ => {}
+    //     }
+    // }
+    // if mode == 0 {
+    //     panic!("Choose a mode: <--upload / --load / --check / --test>");
+    // }
+
+    println!("Starting wasmi-ra-client");
     println!("Connecting to {}", SERVERADDR);
 
     let client_config = make_config();
@@ -267,1074 +266,1128 @@ fn main() {
     let mut conn = TcpStream::connect(SERVERADDR).unwrap();
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    // owner upload wast (and run)
-    if mode == 1 {
-        // send mode to server
-        tls.write_all("upload".as_bytes()).unwrap();
+    // init connection
+    tls.write_all("init".as_bytes()).unwrap();
 
-        loop {
-            println!("Wast file name: ");
-            let mut wast_file = String::new();
-            std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
-            wast_file = wast_file.trim().to_string();
-
-            // if user enter "exit", close the connection
-            if wast_file == "exit" {
-                tls.write_all("exit".as_bytes()).unwrap();
-                let mut plaintext = [0u8;1024];
-                match tls.read(&mut plaintext) {
-                    Ok(_) => {
-                        println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
-                    }
-                    Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                        println!("EOF (tls)");
-                    }
-                    Err(e) => println!("Error in read_to_end: {:?}", e),
-                }
-                break;
+    // authentication - root password:123   guest:any button
+    println!("Input password: ");
+    let mut passwd = String::new();
+    std::io::stdin().read_line(&mut passwd).expect("Failed to read password");
+    passwd = passwd.trim().to_string();
+    tls.write_all(passwd.as_bytes()).unwrap();
+    let mut plaintext = [0u8;128];
+    let mut auth_res = String::new();
+    match tls.read(&mut plaintext) {
+        Ok(_) => {
+            for ch in plaintext.iter() {
+                if *ch != 0x00 {auth_res.push(*ch as char);}
             }
+            println!("Authentication(root/guest): {}", &auth_res);
+        }
+        Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+            println!("EOF (tls)");
+        }
+        Err(e) => println!("Error in read_to_end: {:?}", e),
+    }
 
-            wast_file = format!("./test_input/{}.wast", wast_file);
-            println!("======================= testing {} =====================", &wast_file);
+    loop {
+        // upload: client upload wabt json to enclave and enclave run commands
+        // load: client input the wasm module name stored in romote server, server read the file and run commands
+        // check: check the integrity of code in enclave by getting the report
+        // test: test all wast files in test_input folder
+        // quit: close connection
+        println!("Input mode:[upload/load/check/test/quit]");
+        let mut mode = String::new();
+        std::io::stdin().read_line(&mut mode).expect("Fail to read mode");
+        mode = mode.trim().to_string();
 
-            // ScriptParser interface has changed. Need to feed it with wast content.
-            let wast_content = match std::fs::read(&wast_file) {
-                Ok(content) => content,
-                Err(x) => {
-                    println!("{}", x.to_string());
-                    return;
+        // send mode to server
+        tls.write_all(&mode.as_bytes()).unwrap();
+        let mut buf = [0u8; 128];
+        let mut mode_res = String::new();
+        match tls.read(&mut buf) {
+            Ok(_) => {
+                for ch in buf.iter() {
+                    if *ch != 0x00 {mode_res.push(*ch as char);}
                 }
-            };
-            let path = std::path::Path::new(&wast_file);
-            let fnme = path.file_name().unwrap().to_str().unwrap();
-            let mut parser: ScriptParser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
-            
-            while let Some(Command{kind,line}) =
-                match parser.next() {
-                            Ok(x) => x,
-                            _ => {
-                                println!("Error parsing test input");
-                                return;
-                            }
+                println!("{}", &mode_res);
+            }
+            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                println!("EOF (tls)");
+            }
+            Err(e) => println!("Error in read_to_end: {:?}", e),
+        }
+        if mode_res.starts_with("[-]") {continue;}
+
+        // owner upload wast (and run)
+        if &mode == "upload" {
+            loop {
+                println!("Wast file name: ");
+                let mut wast_file = String::new();
+                std::io::stdin().read_line(&mut wast_file).expect("Failed to read line");
+                wast_file = wast_file.trim().to_string();
+
+                // if user enter "exit", change mode
+                if wast_file == "exit" {
+                    tls.write_all("exit".as_bytes()).unwrap();
+                    let mut plaintext = [0u8;1024];
+                    match tls.read(&mut plaintext) {
+                        Ok(_) => {
+                            println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+                        }
+                        Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                            println!("EOF (tls)");
+                        }
+                        Err(e) => println!("Error in read_to_end: {:?}", e),
+                    }
+                    break;
                 }
-            {
-                println!("Line : {}", line);
 
-                // input file name
+                wast_file = format!("./test_input/{}.wast", wast_file);
+                println!("======================= testing {} =====================", &wast_file);
 
-                match kind {
-                    CommandKind::Module { name, module, .. } => {
-                        let script = match wasm_load_module(module.into_vec(), &name) {
-                            Some(module) => module,
-                            None => {
-                                println!("No module to load!");
-                                return;
-                            }
-                        };
-                        // the same
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                // ScriptParser interface has changed. Need to feed it with wast content.
+                let wast_content = match std::fs::read(&wast_file) {
+                    Ok(content) => content,
+                    Err(x) => {
+                        println!("{}", x.to_string());
+                        continue;
+                    }
+                };
+                let path = std::path::Path::new(&wast_file);
+                let fnme = path.file_name().unwrap().to_str().unwrap();
+                let mut parser: ScriptParser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
+                
+                while let Some(Command{kind,line}) =
+                    match parser.next() {
+                                Ok(x) => x,
+                                _ => {
+                                    println!("Error parsing test input");
+                                    return;
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        // the same
+                    }
+                {
+                    println!("Line : {}", line);
 
-                        println!("load module - success at line {}", line)
-                    },
-
-                    CommandKind::AssertReturn { action, expected } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertReturn wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                    // input file name
+                    match kind {
+                        CommandKind::Module { name, module, .. } => {
+                            let script = match wasm_load_module(module.into_vec(), &name) {
+                                Some(module) => module,
+                                None => {
+                                    println!("No module to load!");
+                                    return;
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                let spec_expected = expected.iter()
-                                                            .cloned()
-                                                            .map(spec_to_runtime_value)
-                                                            .collect::<Vec<_>>();
-                                let actual_result = result.into_iter().collect::<Vec<RuntimeValue>>();
-                                for (actual_result, spec_expected) in actual_result.iter().zip(spec_expected.iter()) {
-                                    assert_eq!(actual_result.value_type(), spec_expected.value_type());
-                                    // f32::NAN != f32::NAN
-                                    match spec_expected {
-                                        &RuntimeValue::F32(val) if val.is_nan() => match actual_result {
-                                            &RuntimeValue::F32(val) => assert!(val.is_nan()),
-                                            _ => unreachable!(), // checked above that types are same
-                                        },
-                                        &RuntimeValue::F64(val) if val.is_nan() => match actual_result {
-                                            &RuntimeValue::F64(val) => assert!(val.is_nan()),
-                                            _ => unreachable!(), // checked above that types are same
-                                        },
-                                        spec_expected @ _ => assert_eq!(actual_result, spec_expected),
+                            };
+                            // the same
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
+                                    println!("Server replied: {}", &res_str);
                                 }
-                                println!("assert_return at line {} - success", line);
-                            },
-                            Err(e) => {
-                                panic!("Expected action to return value, got error: {:?}", e);
-                            }
-                        }
-                        
-                    },
-
-                    CommandKind::AssertReturnCanonicalNan { action }
-                    | CommandKind::AssertReturnArithmeticNan { action } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertReturnCanonicalNan | AssertReturnArithmeticNan wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
                                 }
-                                println!("Server replied: {}", &res_str);
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
                             }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
+                            // the same
+
+                            println!("load module - success at line {}", line)
+                        },
+
+                        CommandKind::AssertReturn { action, expected } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertReturn wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
                             }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
-                                    match actual_result {
-                                        RuntimeValue::F32(val) => if !val.is_nan() {
-                                            panic!("Expected nan value, got {:?}", val)
-                                        },
-                                        RuntimeValue::F64(val) => if !val.is_nan() {
-                                            panic!("Expected nan value, got {:?}", val)
-                                        },
-                                        val @ _ => {
-                                            panic!("Expected action to return float value, got {:?}", val)
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    let spec_expected = expected.iter()
+                                                                .cloned()
+                                                                .map(spec_to_runtime_value)
+                                                                .collect::<Vec<_>>();
+                                    let actual_result = result.into_iter().collect::<Vec<RuntimeValue>>();
+                                    for (actual_result, spec_expected) in actual_result.iter().zip(spec_expected.iter()) {
+                                        assert_eq!(actual_result.value_type(), spec_expected.value_type());
+                                        // f32::NAN != f32::NAN
+                                        match spec_expected {
+                                            &RuntimeValue::F32(val) if val.is_nan() => match actual_result {
+                                                &RuntimeValue::F32(val) => assert!(val.is_nan()),
+                                                _ => unreachable!(), // checked above that types are same
+                                            },
+                                            &RuntimeValue::F64(val) if val.is_nan() => match actual_result {
+                                                &RuntimeValue::F64(val) => assert!(val.is_nan()),
+                                                _ => unreachable!(), // checked above that types are same
+                                            },
+                                            spec_expected @ _ => assert_eq!(actual_result, spec_expected),
                                         }
                                     }
+                                    println!("assert_return at line {} - success", line);
+                                },
+                                Err(e) => {
+                                    panic!("Expected action to return value, got error: {:?}", e);
                                 }
-                                println!("assert_return_nan at line {} - success", line);
                             }
-                            Err(e) => {
-                                panic!("Expected action to return value, got error: {:?}", e);
-                            }
-                        }
-                    },
+                            
+                        },
 
-                    CommandKind::AssertExhaustion { action, .. } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertExhaustion wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                        CommandKind::AssertReturnCanonicalNan { action }
+                        | CommandKind::AssertReturnArithmeticNan { action } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertReturnCanonicalNan | AssertReturnArithmeticNan wasm_run_action fail");
+                                    return;
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
-                            Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
-                        }
-                    },
+                            };
 
-                    CommandKind::AssertTrap { action, .. } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertTrap wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                panic!("Expected action to result in a trap, got result: {:?}", result);
-                            },
-                            Err(e) => {
-                                println!("assert_trap at line {} - success ({:?})", line, e);
-                            },
-                        }
-                    },
-
-                    CommandKind::AssertInvalid { module, .. }
-                    | CommandKind::AssertMalformed { module, .. }
-                    | CommandKind::AssertUnlinkable { module, .. } => {
-                        // Malformed
-                        let script = match wasm_try_load(&module.into_vec()) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertInvalid | AssertMalformed | AssertUnlinkable wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-
-                        match result_obj {
-                            Ok(_) => panic!("Expected invalid module definition, got some module!"),
-                            Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
-                        }
-                    },
-
-                    CommandKind::AssertUninstantiable { module, .. } => {
-                        let script = match wasm_try_load(&module.into_vec()) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertUninstantiable wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
                                 }
-                                println!("Server replied: {}", &res_str);
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
                             }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        
-                        match result_obj {
-                            Ok(_) => panic!("Expected error running start function at line {}", line),
-                            Err(e) => println!("assert_uninstantiable - success ({:?})", e),
-                        }
-                    },
-
-                    CommandKind::Register { name, as_name, .. } => {
-                        let script = match wasm_register(name, as_name) {
-                            Some(res) => res,
-                            None => {
-                                println!("Register wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
+                                        match actual_result {
+                                            RuntimeValue::F32(val) => if !val.is_nan() {
+                                                panic!("Expected nan value, got {:?}", val)
+                                            },
+                                            RuntimeValue::F64(val) => if !val.is_nan() {
+                                                panic!("Expected nan value, got {:?}", val)
+                                            },
+                                            val @ _ => {
+                                                panic!("Expected action to return float value, got {:?}", val)
+                                            }
+                                        }
+                                    }
+                                    println!("assert_return_nan at line {} - success", line);
                                 }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-
-                        match result_obj {
-                            Ok(_) => {println!("register - success at line {}", line)},
-                            Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
-                        }
-                    },
-
-                    CommandKind::PerformAction(action) => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertTrap wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
+                                Err(e) => {
+                                    panic!("Expected action to return value, got error: {:?}", e);
                                 }
-                                println!("Server replied: {}", &res_str);
                             }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
+                        },
+
+                        CommandKind::AssertExhaustion { action, .. } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertExhaustion wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
                             }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        
-                        match result_obj {
-                            Ok(_) => {println!("invoke - success at line {}", line)},
-                            Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
-                        }
-                    },
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
+                                Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
+                            }
+                        },
+
+                        CommandKind::AssertTrap { action, .. } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertTrap wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    panic!("Expected action to result in a trap, got result: {:?}", result);
+                                },
+                                Err(e) => {
+                                    println!("assert_trap at line {} - success ({:?})", line, e);
+                                },
+                            }
+                        },
+
+                        CommandKind::AssertInvalid { module, .. }
+                        | CommandKind::AssertMalformed { module, .. }
+                        | CommandKind::AssertUnlinkable { module, .. } => {
+                            // Malformed
+                            let script = match wasm_try_load(&module.into_vec()) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertInvalid | AssertMalformed | AssertUnlinkable wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+
+                            match result_obj {
+                                Ok(_) => panic!("Expected invalid module definition, got some module!"),
+                                Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
+                            }
+                        },
+
+                        CommandKind::AssertUninstantiable { module, .. } => {
+                            let script = match wasm_try_load(&module.into_vec()) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertUninstantiable wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            
+                            match result_obj {
+                                Ok(_) => panic!("Expected error running start function at line {}", line),
+                                Err(e) => println!("assert_uninstantiable - success ({:?})", e),
+                            }
+                        },
+
+                        CommandKind::Register { name, as_name, .. } => {
+                            let script = match wasm_register(name, as_name) {
+                                Some(res) => res,
+                                None => {
+                                    println!("Register wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+
+                            match result_obj {
+                                Ok(_) => {println!("register - success at line {}", line)},
+                                Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
+                            }
+                        },
+
+                        CommandKind::PerformAction(action) => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertTrap wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            
+                            match result_obj {
+                                Ok(_) => {println!("invoke - success at line {}", line)},
+                                Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
+                            }
+                        },
+                    }
                 }
             }
-        }
-    } 
+        } 
 
-    // client run wasm module stored in remote device
-    else if mode == 2 {
-        // send mode to server
-        tls.write_all("load".as_bytes()).unwrap();
+        // client run wasm module stored in remote device
+        else if &mode == "load" {
+            loop {
+                println!("Load wasm file name: ");
+                let mut msg = String::new();
+                std::io::stdin().read_line(&mut msg).expect("Failed to read line");
+                msg = msg.trim().to_string();
 
-        loop {
-            println!("Load wasm file name: ");
-            let mut msg = String::new();
-            std::io::stdin().read_line(&mut msg).expect("Failed to read line");
-            msg = msg.trim().to_string();
+                // if user enter "exit", change mode
+                if msg == "exit" {
+                    tls.write_all("exit".as_bytes()).unwrap();
+                    let mut plaintext = [0u8;1024];
+                    match tls.read(&mut plaintext) {
+                        Ok(_) => {
+                            println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+                        }
+                        Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                            println!("EOF (tls)");
+                        }
+                        Err(e) => println!("Error in read_to_end: {:?}", e),
+                    }
+                    break;
+                }
+            
+                match tls.write_all(msg.as_bytes()) {
+                    Ok(_) => {},
+                    Err(x) => {
+                        println!("[-] TLS write msg error: {}", x);
+                    }
+                };
 
-            // if user enter "exit", close the connection
-            if msg == "exit" {
-                tls.write_all("exit".as_bytes()).unwrap();
-                let mut plaintext = [0u8;1024];
+                // receive response from server
+                let mut plaintext = [0u8;4096];
+                let mut res_str = String::new();
                 match tls.read(&mut plaintext) {
                     Ok(_) => {
-                        println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
+                        for ch in plaintext.iter() {
+                            if *ch != 0x00 {res_str.push(*ch as char);}
+                        }
+                        println!("Server replied: {}", &res_str);
                     }
                     Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                         println!("EOF (tls)");
                     }
                     Err(e) => println!("Error in read_to_end: {:?}", e),
                 }
-                break;
+                if msg.starts_with("exit") || res_str.starts_with("[-]") {break;}
             }
+        }
         
-            match tls.write_all(msg.as_bytes()) {
+        // check the integrity of code in enclave by getting the report
+        else if &mode == "check" {
+            println!("check module");
+        }
+
+        // test all wast files in test_input folder
+        else if mode == "test" {
+            let wast_list = vec![
+                "test_input/int_exprs.wast",
+                "test_input/conversions.wast",
+                "test_input/nop.wast",
+                "test_input/float_memory.wast",
+                "test_input/call.wast",
+                "test_input/memory.wast",
+                "test_input/utf8-import-module.wast",
+                "test_input/labels.wast",
+                "test_input/align.wast",
+                "test_input/memory_trap.wast",
+                "test_input/br.wast",
+                "test_input/globals.wast",
+                "test_input/comments.wast",
+                "test_input/get_local.wast",
+                "test_input/float_literals.wast",
+                "test_input/elem.wast",
+                "test_input/f64_bitwise.wast",
+                "test_input/custom_section.wast",
+                "test_input/inline-module.wast",
+                "test_input/call_indirect.wast",
+                "test_input/break-drop.wast",
+                "test_input/unreached-invalid.wast",
+                "test_input/utf8-import-field.wast",
+                "test_input/loop.wast",
+                "test_input/br_if.wast",
+                "test_input/select.wast",
+                "test_input/unwind.wast",
+                "test_input/binary.wast",
+                "test_input/tee_local.wast",
+                "test_input/custom.wast",
+                "test_input/start.wast",
+                "test_input/float_misc.wast",
+                "test_input/stack.wast",
+                "test_input/f32_cmp.wast",
+                "test_input/i64.wast",
+                "test_input/const.wast",
+                "test_input/unreachable.wast",
+                "test_input/switch.wast",
+                "test_input/resizing.wast",
+                "test_input/i32.wast",
+                "test_input/f64_cmp.wast",
+                "test_input/int_literals.wast",
+                "test_input/br_table.wast",
+                "test_input/traps.wast",
+                "test_input/return.wast",
+                "test_input/f64.wast",
+                "test_input/type.wast",
+                "test_input/fac.wast",
+                "test_input/set_local.wast",
+                "test_input/func.wast",
+                "test_input/f32.wast",
+                "test_input/f32_bitwise.wast",
+                "test_input/float_exprs.wast",
+                "test_input/linking.wast",
+                "test_input/skip-stack-guard-page.wast",
+                // "test_input/names.wast",
+                "test_input/address.wast",
+                "test_input/memory_redundancy.wast",
+                "test_input/block.wast",
+                "test_input/utf8-invalid-encoding.wast",
+                "test_input/left-to-right.wast",
+                "test_input/forward.wast",
+                "test_input/typecheck.wast",
+                "test_input/store_retval.wast",
+                "test_input/imports.wast",
+                "test_input/exports.wast",
+                "test_input/endianness.wast",
+                "test_input/func_ptrs.wast",
+                "test_input/if.wast",
+                "test_input/token.wast",
+                "test_input/data.wast",
+                "test_input/utf8-custom-section-id.wast",
+            ];
+            for wfile in wast_list {
+                println!("======================= testing {} =====================", wfile);
+                let wast_content = match std::fs::read(&wfile) {
+                    Ok(content) => content,
+                    Err(x) => {
+                        println!("{}", x.to_string());
+                        return;
+                    }
+                };
+                let path = std::path::Path::new(&wfile);
+                let fnme = path.file_name().unwrap().to_str().unwrap();
+                let mut parser: ScriptParser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
+                
+                while let Some(Command{kind,line}) =
+                    match parser.next() {
+                                Ok(x) => x,
+                                _ => {
+                                    println!("Error parsing test input");
+                                    return;
+                                }
+                    }
+                {
+                    println!("Line : {}", line);
+
+                    match kind {
+                        CommandKind::Module { name, module, .. } => {
+                            let script = match wasm_load_module(module.into_vec(), &name) {
+                                Some(module) => module,
+                                None => {
+                                    println!("No module to load!");
+                                    return;
+                                }
+                            };
+                            // the same
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            // the same
+
+                            println!("load module - success at line {}", line)
+                        },
+
+                        CommandKind::AssertReturn { action, expected } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertReturn wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    let spec_expected = expected.iter()
+                                                                .cloned()
+                                                                .map(spec_to_runtime_value)
+                                                                .collect::<Vec<_>>();
+                                    let actual_result = result.into_iter().collect::<Vec<RuntimeValue>>();
+                                    for (actual_result, spec_expected) in actual_result.iter().zip(spec_expected.iter()) {
+                                        assert_eq!(actual_result.value_type(), spec_expected.value_type());
+                                        // f32::NAN != f32::NAN
+                                        match spec_expected {
+                                            &RuntimeValue::F32(val) if val.is_nan() => match actual_result {
+                                                &RuntimeValue::F32(val) => assert!(val.is_nan()),
+                                                _ => unreachable!(), // checked above that types are same
+                                            },
+                                            &RuntimeValue::F64(val) if val.is_nan() => match actual_result {
+                                                &RuntimeValue::F64(val) => assert!(val.is_nan()),
+                                                _ => unreachable!(), // checked above that types are same
+                                            },
+                                            spec_expected @ _ => assert_eq!(actual_result, spec_expected),
+                                        }
+                                    }
+                                    println!("assert_return at line {} - success", line);
+                                },
+                                Err(e) => {
+                                    panic!("Expected action to return value, got error: {:?}", e);
+                                }
+                            }
+                            
+                        },
+
+                        CommandKind::AssertReturnCanonicalNan { action }
+                        | CommandKind::AssertReturnArithmeticNan { action } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertReturnCanonicalNan | AssertReturnArithmeticNan wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
+                                        match actual_result {
+                                            RuntimeValue::F32(val) => if !val.is_nan() {
+                                                panic!("Expected nan value, got {:?}", val)
+                                            },
+                                            RuntimeValue::F64(val) => if !val.is_nan() {
+                                                panic!("Expected nan value, got {:?}", val)
+                                            },
+                                            val @ _ => {
+                                                panic!("Expected action to return float value, got {:?}", val)
+                                            }
+                                        }
+                                    }
+                                    println!("assert_return_nan at line {} - success", line);
+                                }
+                                Err(e) => {
+                                    panic!("Expected action to return value, got error: {:?}", e);
+                                }
+                            }
+                        },
+
+                        CommandKind::AssertExhaustion { action, .. } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertExhaustion wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
+                                Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
+                            }
+                        },
+
+                        CommandKind::AssertTrap { action, .. } => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertTrap wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            match result_obj {
+                                Ok(result) => {
+                                    panic!("Expected action to result in a trap, got result: {:?}", result);
+                                },
+                                Err(e) => {
+                                    println!("assert_trap at line {} - success ({:?})", line, e);
+                                },
+                            }
+                        },
+
+                        CommandKind::AssertInvalid { module, .. }
+                        | CommandKind::AssertMalformed { module, .. }
+                        | CommandKind::AssertUnlinkable { module, .. } => {
+                            // Malformed
+                            let script = match wasm_try_load(&module.into_vec()) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertInvalid | AssertMalformed | AssertUnlinkable wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+
+                            match result_obj {
+                                Ok(_) => panic!("Expected invalid module definition, got some module!"),
+                                Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
+                            }
+                        },
+
+                        CommandKind::AssertUninstantiable { module, .. } => {
+                            let script = match wasm_try_load(&module.into_vec()) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertUninstantiable wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            
+                            match result_obj {
+                                Ok(_) => panic!("Expected error running start function at line {}", line),
+                                Err(e) => println!("assert_uninstantiable - success ({:?})", e),
+                            }
+                        },
+
+                        CommandKind::Register { name, as_name, .. } => {
+                            let script = match wasm_register(name, as_name) {
+                                Some(res) => res,
+                                None => {
+                                    println!("Register wasm_run_action fail");
+                                    return;
+                                }
+                            };
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+
+                            match result_obj {
+                                Ok(_) => {println!("register - success at line {}", line)},
+                                Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
+                            }
+                        },
+
+                        CommandKind::PerformAction(action) => {
+                            let script = match wasm_run_action(&action) {
+                                Some(res) => res,
+                                None => {
+                                    println!("AssertTrap wasm_run_action fail");
+                                    return;
+                                }
+                            };
+
+                            println!("script to enclave: {}", script);
+                            match tls.write_all(script.as_bytes()) {
+                                Ok(_) => {},
+                                Err(x) => {
+                                    println!("[-] Write Module Err: {}", x);
+                                    break;
+                                }
+                            };
+                            let mut plaintext = [0u8;4096];
+                            let mut res_str = String::new();
+                            match tls.read(&mut plaintext) {
+                                Ok(_) => {
+                                    for ch in plaintext.iter() {
+                                        if *ch != 0x00 {res_str.push(*ch as char);}
+                                    }
+                                    println!("Server replied: {}", &res_str);
+                                }
+                                Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
+                                    println!("EOF (tls)");
+                                }
+                                Err(e) => println!("Error in read_to_end: {:?}", e),
+                            }
+                            
+                            let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
+                            // not consider error handling(not use in-enclave function return value sgx_status_t)
+                            let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
+                            
+                            match result_obj {
+                                Ok(_) => {println!("invoke - success at line {}", line)},
+                                Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
+                            }
+                        },
+                    }
+                }
+            }
+
+            println!("[+] Pass all tests!");
+
+            match tls.write_all("exit".as_bytes()) {
                 Ok(_) => {},
                 Err(x) => {
                     println!("[-] TLS write msg error: {}", x);
                 }
             };
-
-            // receive response from server
-            let mut plaintext = [0u8;4096];
-            let mut res_str = String::new();
+        
+            let mut plaintext = [0u8;1024];
             match tls.read(&mut plaintext) {
                 Ok(_) => {
-                    for ch in plaintext.iter() {
-                        if *ch != 0x00 {res_str.push(*ch as char);}
-                    }
-                    println!("Server replied: {}", &res_str);
+                    println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
                 }
                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                     println!("EOF (tls)");
                 }
                 Err(e) => println!("Error in read_to_end: {:?}", e),
             }
-            if msg.starts_with("exit") {break;}
-        }
-    }
-    
-    // check the integrity of code in enclave by getting the report
-    else if mode == 3 {
-        // send mode to server
-        tls.write_all("check".as_bytes()).unwrap();
-    }
-
-    // test all wast files in test_input folder
-    else if mode == 9 {
-        // send mode to server
-        tls.write_all("test".as_bytes()).unwrap();
-
-        let wast_list = vec![
-            "test_input/int_exprs.wast",
-            "test_input/conversions.wast",
-            "test_input/nop.wast",
-            "test_input/float_memory.wast",
-            "test_input/call.wast",
-            "test_input/memory.wast",
-            "test_input/utf8-import-module.wast",
-            "test_input/labels.wast",
-            "test_input/align.wast",
-            "test_input/memory_trap.wast",
-            "test_input/br.wast",
-            "test_input/globals.wast",
-            "test_input/comments.wast",
-            "test_input/get_local.wast",
-            "test_input/float_literals.wast",
-            "test_input/elem.wast",
-            "test_input/f64_bitwise.wast",
-            "test_input/custom_section.wast",
-            "test_input/inline-module.wast",
-            "test_input/call_indirect.wast",
-            "test_input/break-drop.wast",
-            "test_input/unreached-invalid.wast",
-            "test_input/utf8-import-field.wast",
-            "test_input/loop.wast",
-            "test_input/br_if.wast",
-            "test_input/select.wast",
-            "test_input/unwind.wast",
-            "test_input/binary.wast",
-            "test_input/tee_local.wast",
-            "test_input/custom.wast",
-            "test_input/start.wast",
-            "test_input/float_misc.wast",
-            "test_input/stack.wast",
-            "test_input/f32_cmp.wast",
-            "test_input/i64.wast",
-            "test_input/const.wast",
-            "test_input/unreachable.wast",
-            "test_input/switch.wast",
-            "test_input/resizing.wast",
-            "test_input/i32.wast",
-            "test_input/f64_cmp.wast",
-            "test_input/int_literals.wast",
-            "test_input/br_table.wast",
-            "test_input/traps.wast",
-            "test_input/return.wast",
-            "test_input/f64.wast",
-            "test_input/type.wast",
-            "test_input/fac.wast",
-            "test_input/set_local.wast",
-            "test_input/func.wast",
-            "test_input/f32.wast",
-            "test_input/f32_bitwise.wast",
-            "test_input/float_exprs.wast",
-            "test_input/linking.wast",
-            "test_input/skip-stack-guard-page.wast",
-            // "test_input/names.wast",
-            "test_input/address.wast",
-            "test_input/memory_redundancy.wast",
-            "test_input/block.wast",
-            "test_input/utf8-invalid-encoding.wast",
-            "test_input/left-to-right.wast",
-            "test_input/forward.wast",
-            "test_input/typecheck.wast",
-            "test_input/store_retval.wast",
-            "test_input/imports.wast",
-            "test_input/exports.wast",
-            "test_input/endianness.wast",
-            "test_input/func_ptrs.wast",
-            "test_input/if.wast",
-            "test_input/token.wast",
-            "test_input/data.wast",
-            "test_input/utf8-custom-section-id.wast",
-        ];
-        for wfile in wast_list {
-            println!("======================= testing {} =====================", wfile);
-            let wast_content = match std::fs::read(&wfile) {
-                Ok(content) => content,
-                Err(x) => {
-                    println!("{}", x.to_string());
-                    return;
-                }
-            };
-            let path = std::path::Path::new(&wfile);
-            let fnme = path.file_name().unwrap().to_str().unwrap();
-            let mut parser: ScriptParser = ScriptParser::from_source_and_name(&wast_content, fnme).unwrap();
-            
-            while let Some(Command{kind,line}) =
-                match parser.next() {
-                            Ok(x) => x,
-                            _ => {
-                                println!("Error parsing test input");
-                                return;
-                            }
-                }
-            {
-                println!("Line : {}", line);
-
-                match kind {
-                    CommandKind::Module { name, module, .. } => {
-                        let script = match wasm_load_module(module.into_vec(), &name) {
-                            Some(module) => module,
-                            None => {
-                                println!("No module to load!");
-                                return;
-                            }
-                        };
-                        // the same
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        // the same
-
-                        println!("load module - success at line {}", line)
-                    },
-
-                    CommandKind::AssertReturn { action, expected } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertReturn wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                let spec_expected = expected.iter()
-                                                            .cloned()
-                                                            .map(spec_to_runtime_value)
-                                                            .collect::<Vec<_>>();
-                                let actual_result = result.into_iter().collect::<Vec<RuntimeValue>>();
-                                for (actual_result, spec_expected) in actual_result.iter().zip(spec_expected.iter()) {
-                                    assert_eq!(actual_result.value_type(), spec_expected.value_type());
-                                    // f32::NAN != f32::NAN
-                                    match spec_expected {
-                                        &RuntimeValue::F32(val) if val.is_nan() => match actual_result {
-                                            &RuntimeValue::F32(val) => assert!(val.is_nan()),
-                                            _ => unreachable!(), // checked above that types are same
-                                        },
-                                        &RuntimeValue::F64(val) if val.is_nan() => match actual_result {
-                                            &RuntimeValue::F64(val) => assert!(val.is_nan()),
-                                            _ => unreachable!(), // checked above that types are same
-                                        },
-                                        spec_expected @ _ => assert_eq!(actual_result, spec_expected),
-                                    }
-                                }
-                                println!("assert_return at line {} - success", line);
-                            },
-                            Err(e) => {
-                                panic!("Expected action to return value, got error: {:?}", e);
-                            }
-                        }
-                        
-                    },
-
-                    CommandKind::AssertReturnCanonicalNan { action }
-                    | CommandKind::AssertReturnArithmeticNan { action } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertReturnCanonicalNan | AssertReturnArithmeticNan wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                for actual_result in result.into_iter().collect::<Vec<RuntimeValue>>() {
-                                    match actual_result {
-                                        RuntimeValue::F32(val) => if !val.is_nan() {
-                                            panic!("Expected nan value, got {:?}", val)
-                                        },
-                                        RuntimeValue::F64(val) => if !val.is_nan() {
-                                            panic!("Expected nan value, got {:?}", val)
-                                        },
-                                        val @ _ => {
-                                            panic!("Expected action to return float value, got {:?}", val)
-                                        }
-                                    }
-                                }
-                                println!("assert_return_nan at line {} - success", line);
-                            }
-                            Err(e) => {
-                                panic!("Expected action to return value, got error: {:?}", e);
-                            }
-                        }
-                    },
-
-                    CommandKind::AssertExhaustion { action, .. } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertExhaustion wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
-                            Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
-                        }
-                    },
-
-                    CommandKind::AssertTrap { action, .. } => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertTrap wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        match result_obj {
-                            Ok(result) => {
-                                panic!("Expected action to result in a trap, got result: {:?}", result);
-                            },
-                            Err(e) => {
-                                println!("assert_trap at line {} - success ({:?})", line, e);
-                            },
-                        }
-                    },
-
-                    CommandKind::AssertInvalid { module, .. }
-                    | CommandKind::AssertMalformed { module, .. }
-                    | CommandKind::AssertUnlinkable { module, .. } => {
-                        // Malformed
-                        let script = match wasm_try_load(&module.into_vec()) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertInvalid | AssertMalformed | AssertUnlinkable wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-
-                        match result_obj {
-                            Ok(_) => panic!("Expected invalid module definition, got some module!"),
-                            Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
-                        }
-                    },
-
-                    CommandKind::AssertUninstantiable { module, .. } => {
-                        let script = match wasm_try_load(&module.into_vec()) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertUninstantiable wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        
-                        match result_obj {
-                            Ok(_) => panic!("Expected error running start function at line {}", line),
-                            Err(e) => println!("assert_uninstantiable - success ({:?})", e),
-                        }
-                    },
-
-                    CommandKind::Register { name, as_name, .. } => {
-                        let script = match wasm_register(name, as_name) {
-                            Some(res) => res,
-                            None => {
-                                println!("Register wasm_run_action fail");
-                                return;
-                            }
-                        };
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-
-                        match result_obj {
-                            Ok(_) => {println!("register - success at line {}", line)},
-                            Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
-                        }
-                    },
-
-                    CommandKind::PerformAction(action) => {
-                        let script = match wasm_run_action(&action) {
-                            Some(res) => res,
-                            None => {
-                                println!("AssertTrap wasm_run_action fail");
-                                return;
-                            }
-                        };
-
-                        println!("script to enclave: {}", script);
-                        match tls.write_all(script.as_bytes()) {
-                            Ok(_) => {},
-                            Err(x) => {
-                                println!("[-] Write Module Err: {}", x);
-                                break;
-                            }
-                        };
-                        let mut plaintext = [0u8;4096];
-                        let mut res_str = String::new();
-                        match tls.read(&mut plaintext) {
-                            Ok(_) => {
-                                for ch in plaintext.iter() {
-                                    if *ch != 0x00 {res_str.push(*ch as char);}
-                                }
-                                println!("Server replied: {}", &res_str);
-                            }
-                            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                                println!("EOF (tls)");
-                            }
-                            Err(e) => println!("Error in read_to_end: {:?}", e),
-                        }
-                        
-                        let result: Result<Option<BoundaryValue>, InterpreterError> = serde_json::from_str(&res_str).unwrap();
-                        // not consider error handling(not use in-enclave function return value sgx_status_t)
-                        let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
-                        
-                        match result_obj {
-                            Ok(_) => {println!("invoke - success at line {}", line)},
-                            Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
-                        }
-                    },
-                }
-            }
         }
 
-        println!("[+] Pass all tests!");
+        // close connection
+        else if &mode == "quit" {
+            println!("Bye");
+            break;
+        }
 
-        match tls.write_all("exit".as_bytes()) {
-            Ok(_) => {},
-            Err(x) => {
-                println!("[-] TLS write msg error: {}", x);
-            }
-        };
-    
-        let mut plaintext = [0u8;1024];
-        match tls.read(&mut plaintext) {
-            Ok(_) => {
-                println!("Server replied: {}", str::from_utf8(&plaintext).unwrap());
-            }
-            Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
-                println!("EOF (tls)");
-            }
-            Err(e) => println!("Error in read_to_end: {:?}", e),
+        // wrong mode
+        else {
+            println!("Mode not exist.");
         }
     }
 }

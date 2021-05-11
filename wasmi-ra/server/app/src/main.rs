@@ -758,7 +758,13 @@ pub extern "C" fn ocall_load_wasm (sealed_log: &mut [u8; 4096], file_name: *cons
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
     let file_name = format!("./storage/{}", std::str::from_utf8(file_name_slice).unwrap());
 
-    let mut file = fs::File::open(file_name).unwrap();
+    let mut file = match fs::File::open(file_name){
+        Ok(f) => f,
+        Err(e) => {
+            println!("Cannot open file: {:?}", e);
+            return sgx_status_t::SGX_ERROR_FILE_BAD_STATUS;
+        }
+    };
     let _ = file.read(sealed_log);
 
     sgx_status_t::SGX_SUCCESS
@@ -767,7 +773,6 @@ pub extern "C" fn ocall_load_wasm (sealed_log: &mut [u8; 4096], file_name: *cons
 #[no_mangle]
 pub extern "C" fn ocall_store_wasm (sealed_log: &[u8; 4096], file_name: *const u8, name_len: usize) -> sgx_status_t {
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
-
     let file_name = std::str::from_utf8(file_name_slice).unwrap();
 
     println!("file name: {}", file_name);

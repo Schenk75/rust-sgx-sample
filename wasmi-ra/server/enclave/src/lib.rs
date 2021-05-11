@@ -884,234 +884,276 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
     let mut conn = TcpStream::new(socket_fd).unwrap();
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    // read mode
-    let mut buf = [0u8; 1024];
-    let mut mode = String::new();
+    // init connection
+    let mut buf = [0u8; 32];
+    match tls.read(&mut buf) {
+        Ok(_) => {},
+        Err(e) => {
+            println!("Error in init connection: {:?}", e);
+        }
+    }
+
+    // authentication
+    let client_auth: u8;    // 1:root   2:guest
+    let mut buf = [0u8; 32];
+    let mut passwd = String::new();
     match tls.read(&mut buf) {
         Ok(_) => {
             for ch in buf.iter() {
                 if *ch != 0x00 {
-                    mode.push(*ch as char);
+                    passwd.push(*ch as char);
                 }
             }
         },
         Err(e) => {
-            println!("Error in read mode: {:?}", e);
+            println!("Error in read passwd: {:?}", e);
         }
     }
+    if passwd == "123" {
+        client_auth = 1;
+        tls.write_all("root".as_bytes()).unwrap();
+    } else {
+        client_auth = 2;
+        tls.write_all("guest".as_bytes()).unwrap();
+    }
 
-    match mode.as_str() {
-        "upload" | "test" => {
-            println!("Client mode: {}", &mode);
-            loop {
-                println!("Server running...");
-
-                let text_len = 4096;
-                let mut msg = String::new();
-                let mut exit_flag = false;
-                let mut plaintext = [0u8;4096];
-                while let Ok(len) = tls.read(&mut plaintext) {
-                    // count the successive '}'
-                    let mut cnt = 0;
-                    for ch in plaintext.iter() {
-                        if *ch == 125 {
-                            cnt += 1;
-                        } else {
-                            cnt = 0;
-                        }
-                        // println!("u8:{}  char:{}", *ch, *ch as char);
-                        msg.push(*ch as char);
-                        if cnt == 2 {break;}
+    loop {
+        println!("Server receiving mode...");
+        // read mode
+        let mut buf = [0u8; 32];
+        let mut mode = String::new();
+        match tls.read(&mut buf) {
+            Ok(_) => {
+                for ch in buf.iter() {
+                    if *ch != 0x00 {
+                        mode.push(*ch as char);
                     }
+                }
+            },
+            Err(e) => {
+                println!("[-] Error in read mode: {:?}", e);
+            }
+        }
 
-                    // the end of the text by client
-                    if len < text_len {
-                        // println!("Client said: {}", msg);
+        // guest don't have permission to upload module
+        if &mode == "upload" && client_auth != 1 {
+            tls.write_all(format!("[-] No Permission to execute mode: {}", &mode).as_bytes()).unwrap();
+            continue;
+        }
+        tls.write_all(format!("Mode: {}", &mode).as_bytes()).unwrap();
 
-                        // exit the program
-                        if msg.starts_with("exit") {
-                            // println!("break");
-                            tls.write_all("end".as_bytes()).unwrap();
-                            exit_flag = true;
-                            break;
-                        }
-
-                        // write to file (only in mode upload)
-                        if &mode == "upload" {
-                            let file_name = "test".to_string();
-
-                            // seal data
-                            let sealed_log: [u8; 4096] = [0; 4096];
-                            let sealed_log_size = sealed_log.len() as u32;
-                            let aad: [u8; 0] = [0_u8; 0];
-                            let result = SgxSealedData::<[u8]>::seal_data(&aad, msg.as_bytes());
-                            let sealed_data = match result {
-                                Ok(x) => x,
-                                Err(ret) => { return ret; },
-                            };
-                            let opt = unsafe {
-                                sealed_data.to_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
-                            };
-                            if opt.is_none() {
-                                return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
+        match mode.as_str() {
+            "upload" | "test" => {
+                loop {
+                    println!("Server running in mode {}...", &mode);
+    
+                    let text_len = 4096;
+                    let mut msg = String::new();
+                    let mut exit_flag = false;
+                    let mut plaintext = [0u8;4096];
+                    while let Ok(len) = tls.read(&mut plaintext) {
+                        // count the successive '}'
+                        let mut cnt = 0;
+                        for ch in plaintext.iter() {
+                            if *ch == 125 {
+                                cnt += 1;
+                            } else {
+                                cnt = 0;
                             }
-                            // println!("sealed data: {:?}", sealed_log);
-
-                            // store sealed data to file
-                            let mut retval = sgx_status_t::SGX_SUCCESS;
-                            let result = unsafe {
-                                ocall_store_wasm(
-                                    &mut retval as *mut sgx_status_t,
-                                    &sealed_log,
-                                    file_name.as_ptr() as *const u8,
-                                    file_name.len())
-                            };
-                            match result {
-                                sgx_status_t::SGX_SUCCESS => {},
-                                _ => {
-                                    println!("[-] ocall_store_wasm Failed {}!", result.as_str());
-                                    break;
-                                }
-                            }
+                            // println!("u8:{}  char:{}", *ch, *ch as char);
+                            msg.push(*ch as char);
+                            if cnt == 2 {break;}
                         }
-
-                        // run the action provided by the client
-                        let ret_str = match wasm_run_action(&msg) {
-                            Ok(result) => result,
-                            Err(_) => {
-                                println!("[-] wasm_run_action fail");
+    
+                        // the end of the text by client
+                        if len < text_len {
+                            // println!("Client said: {}", msg);
+    
+                            // exit the program
+                            if msg.starts_with("exit") {
+                                // println!("break");
+                                tls.write_all("end".as_bytes()).unwrap();
+                                exit_flag = true;
                                 break;
                             }
-                        };
-                        tls.write_all(ret_str.as_bytes()).unwrap();
-                        break;
-                    }
-                }
-                examine_module();
-                if exit_flag {break;}
-            } 
-        },
-
-        "load" => {
-            println!("Client mode: {}", &mode);
-            loop {
-                println!("Server running...");
-
-                let mut file_name = String::new();
-                let mut plaintext = [0u8;64];
-
-                match tls.read(&mut plaintext) {
-                    Ok(_) => {
-                        for ch in plaintext.iter() {
-                            if *ch != 0x00 {
-                                file_name.push(*ch as char);
+    
+                            // write to file (only in mode upload)
+                            if &mode == "upload" {
+                                let file_name = "test".to_string();
+    
+                                // seal data
+                                let sealed_log: [u8; 4096] = [0; 4096];
+                                let sealed_log_size = sealed_log.len() as u32;
+                                let aad: [u8; 0] = [0_u8; 0];
+                                let result = SgxSealedData::<[u8]>::seal_data(&aad, msg.as_bytes());
+                                let sealed_data = match result {
+                                    Ok(x) => x,
+                                    Err(ret) => { return ret; },
+                                };
+                                let opt = unsafe {
+                                    sealed_data.to_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
+                                };
+                                if opt.is_none() {
+                                    return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
+                                }
+                                // println!("sealed data: {:?}", sealed_log);
+    
+                                // store sealed data to file
+                                let mut retval = sgx_status_t::SGX_SUCCESS;
+                                let result = unsafe {
+                                    ocall_store_wasm(
+                                        &mut retval as *mut sgx_status_t,
+                                        &sealed_log,
+                                        file_name.as_ptr() as *const u8,
+                                        file_name.len())
+                                };
+                                match result {
+                                    sgx_status_t::SGX_SUCCESS => {},
+                                    _ => {
+                                        tls.write_all(format!("[-] ocall_store_wasm Failed {}!", result.as_str()).as_bytes()).unwrap();
+                                        break;
+                                    }
+                                }
                             }
+    
+                            // run the action provided by the client
+                            let ret_str = match wasm_run_action(&msg) {
+                                Ok(result) => result,
+                                Err(_) => {
+                                    tls.write_all("[-] wasm_run_action fail".as_bytes()).unwrap();
+                                    break;
+                                }
+                            };
+                            tls.write_all(ret_str.as_bytes()).unwrap();
+                            break;
                         }
-                    },
+                    }
+                    examine_module();
+                    if exit_flag {break;}
+                } 
+            },
+    
+            "load" => {
+                loop {
+                    println!("Server running in mode {}...", &mode);
+    
+                    let mut file_name = String::new();
+                    let mut plaintext = [0u8;64];
+    
+                    match tls.read(&mut plaintext) {
+                        Ok(_) => {
+                            for ch in plaintext.iter() {
+                                if *ch != 0x00 {
+                                    file_name.push(*ch as char);
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            tls.write_all(format!("[-] Error read tls: {:?}", e).as_bytes()).unwrap();
+                            continue;
+                        }
+                    }
+    
+                    println!("wasm file name in enclave: {}", file_name);
+                    // exit the program
+                    if file_name.starts_with("exit") {
+                        // println!("break");
+                        tls.write_all("end".as_bytes()).unwrap();
+                        break;
+                    }
+    
+                    // read wasm file through ocall
+                    let mut ret_val = sgx_status_t::SGX_SUCCESS;
+                    let mut sealed_log: [u8; 4096] = [0; 4096];
+                    let sealed_log_size = sealed_log.len() as u32;
+                    let result = unsafe {
+                        ocall_load_wasm(
+                            &mut ret_val as *mut sgx_status_t, 
+                            &mut sealed_log,
+                            file_name.as_ptr() as *const u8, 
+                            file_name.len())
+                    };
+                    match result {
+                        sgx_status_t::SGX_SUCCESS => {},
+                        _ => {
+                            tls.write_all(format!("[-] ocall_load_wasm Failed {}", result.as_str()).as_bytes());
+                            continue;
+                        }
+                    }
+                    match ret_val {
+                        sgx_status_t::SGX_SUCCESS => {},
+                        _ => {
+                            tls.write_all(format!("[-] ocall_load_wasm Failed {}", result.as_str()).as_bytes());
+                            continue;
+                        }
+                    }
+                    
+                    // unseal data
+                    let opt = unsafe {
+                        SgxSealedData::<[u8]>::from_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
+                    };
+                    let sealed_data = match opt {
+                        Some(x) => x,
+                        None => {
+                            tls.write_all("[-] unwrap sealed data fail".as_bytes()).unwrap();
+                            // return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
+                            continue;
+                        },
+                    };
+                    let result = sealed_data.unseal_data();
+                    let unsealed_data = match result {
+                        Ok(x) => x,
+                        Err(ret) => {
+                            tls.write_all("[-] unseal data fail".as_bytes()).unwrap();
+                            continue;
+                        },
+                    };
+                    let encoded_slice = unsealed_data.get_decrypt_txt();
+                    let mut wasm = String::new();
+                    for ch in encoded_slice {
+                        if *ch != 0x00 {
+                            wasm.push(*ch as char);
+                        }
+                    }
+                    // println!("wasm to load: {}", wasm);                
+    
+                    // run action
+                    let ret_str = match wasm_run_action(&wasm) {
+                        Ok(result) => result,
+                        Err(_) => {
+                            tls.write_all("[-] wasm_run_action fail".as_bytes()).unwrap();
+                            continue;
+                        }
+                    };
+                    tls.write_all(ret_str.as_bytes()).unwrap();
+                    examine_module();
+                }
+            },
+    
+            "check" => {
+                println!("Client mode: {}", &mode);
+                let (check_report, check_sig, check_cert) = match create_attestation_report(&pub_k, sign_type, false) {
+                    Ok(r) => r,
                     Err(e) => {
-                        println!("[-] Error read tls: {:?}", e);
-                        break;
-                    }
-                }
-
-                println!("wasm file name in enclave: {}", file_name);
-                // exit the program
-                if file_name.starts_with("exit") {
-                    // println!("break");
-                    tls.write_all("end".as_bytes()).unwrap();
-                    break;
-                }
-
-                // read wasm file through ocall
-                let mut ret_val = sgx_status_t::SGX_SUCCESS;
-                let mut sealed_log: [u8; 4096] = [0; 4096];
-                let sealed_log_size = sealed_log.len() as u32;
-                let result = unsafe {
-                    ocall_load_wasm(
-                        &mut ret_val as *mut sgx_status_t, 
-                        &mut sealed_log,
-                        file_name.as_ptr() as *const u8, 
-                        file_name.len())
-                };
-                match result {
-                    sgx_status_t::SGX_SUCCESS => {},
-                    _ => {
-                        println!("[-] ocall_load_wasm Failed {}!", result.as_str());
-                        break;
-                    }
-                }
-                
-                // unseal data
-                let opt = unsafe {
-                    SgxSealedData::<[u8]>::from_raw_sealed_data_t(sealed_log.as_ptr() as *mut sgx_sealed_data_t, sealed_log_size)
-                };
-                let sealed_data = match opt {
-                    Some(x) => x,
-                    None => {
-                        return sgx_status_t::SGX_ERROR_INVALID_PARAMETER;
-                    },
-                };
-                let result = sealed_data.unseal_data();
-                let unsealed_data = match result {
-                    Ok(x) => x,
-                    Err(ret) => {
-                        return ret;
-                    },
-                };
-                let encoded_slice = unsealed_data.get_decrypt_txt();
-                let mut wasm = String::new();
-                for ch in encoded_slice {
-                    if *ch != 0x00 {
-                        wasm.push(*ch as char);
-                    }
-                }
-                // println!("wasm to load: {}", wasm);                
-
-                // run action
-                let ret_str = match wasm_run_action(&wasm) {
-                    Ok(result) => result,
-                    Err(_) => {
-                        println!("[-] wasm_run_action fail");
-                        break;
+                        println!("Error in create_attestation_report: {:?}", e);
+                        // return e;
+                        continue;
                     }
                 };
-                tls.write_all(ret_str.as_bytes()).unwrap();
-                examine_module();
-            }
-        },
+                println!();
+                println!("check_report: {}", &check_report);
+                println!("check_sig: {}", &check_sig);
+                println!("check_cert: {}", &check_cert);
+            },
+    
+            "quit" => {
+                println!("Close connection");
+                break;
+            },
 
-        "check" => {
-            let (check_report, check_sig, check_cert) = match create_attestation_report(&pub_k, sign_type, false) {
-                Ok(r) => r,
-                Err(e) => {
-                    println!("Error in create_attestation_report: {:?}", e);
-                    return e;
-                }
-            };
-            println!();
-            println!("check_report: {}", &check_report);
-            println!("check_sig: {}", &check_sig);
-            println!("check_cert: {}", &check_cert);
-        }
-
-        _ => {
-            println!("Err mode");
-            // let mut ret_val: sgx_status_t = sgx_status_t::SGX_ERROR_UNEXPECTED;
-            // let result = unsafe {
-            //     ocall_load_wast(
-            //         &mut ret_val as *mut sgx_status_t, 
-            //         msg.to_string().as_ptr() as *const u8, 
-            //         msg.len())
-            // };
-            // match result {
-            //     sgx_status_t::SGX_SUCCESS => {},
-            //     _ => {
-            //         println!("[-] ocall_run_wast fail: {}", result.as_str());
-            //     }
-            // }
-        
+            _ => {}
         }
     }
-    
+
     sgx_status_t::SGX_SUCCESS
 }
