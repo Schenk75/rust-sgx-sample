@@ -230,10 +230,28 @@ Succeed.
 
 1. 功能测试
    - 上传
+   
+   ```wat
+   (module $add_module
+     (func $add (param $lhs i32) (param $rhs i32) (result i32)
+       get_local $lhs
+       get_local $rhs
+       i32.add)
+     (export "add" (func $add))
+   )
+   ```
+   
+   ```json
+   {"LoadModule":{"name":"$add_module","module":[0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]}}
+   ```
+   
    - 加载
    - 验证
+   
 2. 性能測試：比較原生的wasmi和sgx-wasmi跑所有test_input的效率
+
 3. 安全測試：
+   
    - 
 
 
