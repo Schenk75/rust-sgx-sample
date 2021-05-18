@@ -199,6 +199,7 @@ TWINE論文
 - 加载进WasmEngine的wasm模块，怎么为其传入参数【重要】
 - 身份认证，获取SIGSTRUCT中的公钥进行加密；与客户端对模块签名是相同的技术路线
 - 验证代码完整性
+- 創建Enclave的具體過程，結合Makefile查看
 
 
 
@@ -208,6 +209,24 @@ TWINE論文
 
 
 #### experiment
+
+```
+<EnclaveConfiguration>
+    <ProdID>0</ProdID>
+    <ISVSVN>0</ISVSVN>
+    <StackMaxSize>0x100000</StackMaxSize>
+    <HeapMaxSize>0x20000000</HeapMaxSize>
+    <TCSNum>1</TCSNum>
+    <TCSPolicy>1</TCSPolicy>
+    <DisableDebug>0</DisableDebug>
+    <MiscSelect>0</MiscSelect>
+    <MiscMask>0xFFFFFFFF</MiscMask>
+</EnclaveConfiguration>
+tcs_num 1, tcs_max_num 1, tcs_min_pool 1
+The required memory is 540868608B.
+The required memory is 0x203d0000, 528192 KB.
+Succeed.
+```
 
 1. 功能测试
    - 上传
