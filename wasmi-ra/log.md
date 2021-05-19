@@ -137,3 +137,34 @@ quote:
 }
 ```
 
+
+
+validate quote:
+
+```json
+Cert is good
+Signature good
+Time diff = 0
+isvEnclaveQuoteStatus = GROUP_OUT_OF_DATE
+platform_info_blob { 
+    sgx_epid_group_flags: 4, 
+    sgx_tcb_evaluation_flags: 256, 
+    pse_evaluation_flags: 0, 
+    latest_equivalent_tcb_psvn: [17, 17, 2, 4, 1, 1, 7, 0, 0, 0, 0, 0, 0, 0, 0, 0, 11, 0], 
+    latest_pse_isvsvn: [0, 11], 
+    latest_psda_svn: [0, 0, 0, 2], 
+    xeid: 0, gid: 3372875776, 
+    signature: sgx_ec256_signature_t { 
+    	gx: [115, 31, 146, 241, 175, 106, 232, 19, 86, 61, 2, 207, 30, 80, 161, 29, 63, 212, 			 42, 88, 233, 153, 76, 7, 150, 202, 71, 177, 125, 94, 110, 222], 
+		gy: [148, 2, 70, 15, 37, 62, 89, 163, 7, 76, 218, 96, 32, 30, 142, 165, 94, 235, 218, 			  188, 70, 242, 239, 196, 68, 15, 162, 78, 10, 3, 164, 5] } 
+}
+sgx quote version = 2
+sgx quote signature type = 1
+sgx quote report_data = 39cdbd879a2d4ad55aeaecdc567fd947d5bd1d6c36fe0eaf6893bbf8b8e63cedfd272
+						de1dd9181757a1c499227b06aa1647c90411dd1faabadcf139512753692
+sgx quote mr_enclave = fb5d9f0e1ec5db8783335e3d9fb07e4f287ae2a70da1430c8414594bf0ef85e3
+sgx quote mr_signer = 83d719e77deaca1470f6baf62a4d774303c899db69020f9c70ee1dfc08c7ce9e
+Anticipated public key = 39cdbd879a2d4ad55aeaecdc567fd947d5bd1d6c36fe0eaf6893bbf8b8e63cedfd27
+						2de1dd9181757a1c499227b06aa1647c90411dd1faabadcf139512753692
+```
+
