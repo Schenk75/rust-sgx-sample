@@ -401,10 +401,11 @@ fn wasm_run_action(req: &str) -> Result<String, ()> {
 /// take a look at the module instances in the driver
 #[no_mangle]
 pub extern "C" fn examine_module() {
-    println!("----------------------------------------------------------------------------------");
-    println!("SPECDRIVER module instances: {:?}", SPECDRIVER.lock().unwrap().get_instances());
-    println!("SPECDRIVER last module: {:?}", SPECDRIVER.lock().unwrap().get_last_module());
-    println!("----------------------------------------------------------------------------------");
+    println!("------------------------------------------------------------------------------------------------------");
+    println!("WasmEngine module instances: {:?}", SPECDRIVER.lock().unwrap().get_instances());
+    println!();
+    println!("WasmEngine default module: {:?}", SPECDRIVER.lock().unwrap().get_last_module());
+    println!("------------------------------------------------------------------------------------------------------");
 }
 
 
@@ -979,7 +980,7 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
     
                             // write to file (only in mode upload)
                             if &mode == "upload" {
-                                let file_name = "test".to_string();
+                                let file_name = "add.bin".to_string();
     
                                 // seal data
                                 let sealed_log: [u8; 4096] = [0; 4096];

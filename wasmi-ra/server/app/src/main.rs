@@ -775,7 +775,7 @@ pub extern "C" fn ocall_store_wasm (sealed_log: &[u8; 4096], file_name: *const u
     let file_name_slice = unsafe {slice::from_raw_parts(file_name, name_len)};
     let file_name = std::str::from_utf8(file_name_slice).unwrap();
 
-    println!("file name: {}", file_name);
+    println!("Save file name: {}", file_name);
 
     let mut file = fs::File::create(format!("./storage/{}", file_name)).expect("create file failed");
     file.write_all(sealed_log).expect("write file failed");

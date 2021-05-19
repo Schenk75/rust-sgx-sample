@@ -168,7 +168,7 @@ fn sgxwasm_run_action(hash: &[u8; 32], signature: &sgx_rsa3072_signature_t,
             println!("[+] signature verified success!");
         },
         sgx_status_t::SGX_ERROR_UNEXPECTED => {
-            println!("[-] signature verified fail!");
+            println!("Server replied: [-] signature verified fail!");
             return sgx_status_t::SGX_ERROR_UNEXPECTED;
         },
         _ => {

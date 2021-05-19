@@ -296,7 +296,7 @@ fn main() {
         // check: check the integrity of code in enclave by getting the report
         // test: test all wast files in test_input folder
         // quit: close connection
-        println!("Input mode:[upload/load/check/test/quit]");
+        println!("Input mode[upload/load/check/test/quit]: ");
         let mut mode = String::new();
         std::io::stdin().read_line(&mut mode).expect("Fail to read mode");
         mode = mode.trim().to_string();

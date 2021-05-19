@@ -229,11 +229,14 @@ fn verify_mr_enclave() -> bool {
         i = i+1;
     }
 
+    println!("Expected guest VE mr_enclave:\n{}", ms_str_verifyserver);
+    println!("guest VE actual mr_enclave:\n{}", ms_str_server);
+
     if ms_str_server == ms_str_verifyserver {
-        println!("verify successd");
+        println!("[+] mr_enclave verify success!");
         true
     }else{
-        println!("failed to verify mr_enclave");
+        println!("[-] failed to verify mr_enclave");
         false
     }
 }

@@ -101,7 +101,8 @@ fn main() {
 
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    tls.write_all(b"hello").unwrap();
+    let msg = "{\"LoadModule\":{\"name\":\"$add_module\",\"module\":[0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]}}";
+    tls.write_all(msg.as_bytes()).unwrap();
 
     let mut plaintext = Vec::new();
     match tls.read_to_end(&mut plaintext) {
@@ -125,7 +126,8 @@ fn main() {
 
     let mut tls = rustls::Stream::new(&mut sess, &mut conn);
 
-    tls.write_all(b"hello").unwrap();
+    let msg = "{\"LoadModule\":{\"name\":\"$add_module\",\"module\":[0,97,115,109,1,0,0,0,1,7,1,96,2,127,127,1,127,3,2,1,0,7,7,1,3,97,100,100,0,0,10,9,1,7,0,32,0,32,1,106,11]}}";
+    tls.write_all(msg.as_bytes()).unwrap();
 
     let mut plaintext = Vec::new();
     match tls.read_to_end(&mut plaintext) {

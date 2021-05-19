@@ -190,7 +190,7 @@ fn sgx_enclave_wasm_invoke(sign_msg : Option<(String, sgx_rsa3072_signature_t, [
         Some((msg, sig, h)) => (msg, sig, h),
         None => panic!("sgx_enclave_wasm_invoke sign msg error!")
     };
-    println!("req_str: {}", &req_str);
+    println!("script to enclave: {}", &req_str);
 
     let mut ret_val = sgx_status_t::SGX_SUCCESS;
     let     req_bin = req_str.as_ptr() as * const u8;
@@ -653,6 +653,8 @@ fn sign_msg(msg: String, privkey: &sgx_rsa3072_key_t) -> Option<(String, sgx_rsa
             return None;
         }
     };
+    println!("signature: {:?}", signature.signature);
+    println!("script hash: {:?}", &hash);
     Some((msg, signature, hash))
 }
 
@@ -683,35 +685,39 @@ fn main() {
     // create rsa3072 public key and private key
     let mut pubkey = sgx_rsa3072_public_key_t::default();
     let mut privkey = sgx_rsa3072_key_t::default();
-    println!("Input rsa key file: ");
-    let mut key_file = String::new();
-    std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
-    key_file = key_file.trim().to_string();
-    match fs::File::open(&key_file) {
-        Ok(mut file) => {
-            let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
-            let mut e = [0_u8; 4];
-            let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
-            file.read(&mut n).unwrap();
-            file.read(&mut e).unwrap();
-            file.read(&mut d).unwrap();
-            pubkey.modulus = n;
-            pubkey.exponent = e;
-            privkey.modulus = n;
-            privkey.d = d;
-            privkey.e = e;
-        },
-        Err(_e) => {
-            if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
-                println!("[-] generate_rsa_keypair function fail!");
-                enclave.destroy();
-                println!("\n[+] Destroy Enclave {}", eid);
-                return;
-            } else {
-                println!("[+] create rsa key pair success!");
-            }
-        }
-    };
+    let mut pu = sgx_rsa3072_public_key_t::default();
+    let mut pr = sgx_rsa3072_key_t::default();
+    generate_rsa_keypair(&mut pubkey, &mut pr, "key1".to_string());
+    generate_rsa_keypair(&mut pu, &mut privkey, "key2".to_string());
+    // println!("Input rsa key file: ");
+    // let mut key_file = String::new();
+    // std::io::stdin().read_line(&mut key_file).expect("Failed to read line");
+    // key_file = key_file.trim().to_string();
+    // match fs::File::open(&key_file) {
+    //     Ok(mut file) => {
+    //         let mut n = [0_u8; SGX_RSA3072_KEY_SIZE];
+    //         let mut e = [0_u8; 4];
+    //         let mut d = [0_u8; SGX_RSA3072_PRI_EXP_SIZE];
+    //         file.read(&mut n).unwrap();
+    //         file.read(&mut e).unwrap();
+    //         file.read(&mut d).unwrap();
+    //         pubkey.modulus = n;
+    //         pubkey.exponent = e;
+    //         privkey.modulus = n;
+    //         privkey.d = d;
+    //         privkey.e = e;
+    //     },
+    //     Err(_e) => {
+    //         if generate_rsa_keypair(&mut pubkey, &mut privkey, key_file) == -1 {
+    //             println!("[-] generate_rsa_keypair function fail!");
+    //             enclave.destroy();
+    //             println!("\n[+] Destroy Enclave {}", eid);
+    //             return;
+    //         } else {
+    //             println!("[+] create rsa key pair success!");
+    //         }
+    //     }
+    // };
 
     // upload rsa3072 key pair to enclave
     let mut retval = sgx_status_t::SGX_SUCCESS;
@@ -820,7 +826,7 @@ fn main() {
         match run_a_wast(&enclave, &wast_file, &privkey) {
             Ok(()) => {},
             Err(x) => {
-                println!("{}", x);
+                println!("Server replied: {}", x);
             }
         };
     }
