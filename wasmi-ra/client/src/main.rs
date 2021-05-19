@@ -12,6 +12,7 @@ extern crate sgx_ucrypto as crypto;
 extern crate wabt;
 extern crate serde;
 extern crate nan_preserving_float;
+extern crate time;
 #[macro_use]
 extern crate serde_derive;
 
@@ -28,6 +29,7 @@ use std::{str, fs, env, slice};
 use std::net::TcpStream;
 use wasm_def::{RuntimeValue, Error as InterpreterError};
 use wabt::script::{Action, Command, CommandKind, ScriptParser, Value};
+use time::*;
 
 const SERVERADDR: &str = "localhost:3443";
 static MAXOUTPUT: usize = 4096;
@@ -918,8 +920,10 @@ fn main() {
                 "test_input/data.wast",
                 "test_input/utf8-custom-section-id.wast",
             ];
+            let mut file = fs::OpenOptions::new().append(true).open("data.txt").expect("cannot open file");
             for wfile in wast_list {
                 println!("======================= testing {} =====================", wfile);
+                let start_time = time::get_time();
                 let wast_content = match std::fs::read(&wfile) {
                     Ok(content) => content,
                     Err(x) => {
@@ -1356,6 +1360,9 @@ fn main() {
                         },
                     }
                 }
+                let duration = time::get_time() - start_time;
+                let wasm_name: Vec<&str> = wfile.split(|c| c == '/' || c == '.').collect();
+                file.write_all(format!("{}: {}\n", wasm_name[1], duration.num_nanoseconds().unwrap()).as_bytes()).expect("write fail");
             }
 
             println!("[+] Pass all tests!");

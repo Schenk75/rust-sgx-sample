@@ -1016,7 +1016,7 @@ pub extern "C" fn run_server(socket_fd: c_int, sign_type: sgx_quote_sign_type_t)
                                     }
                                 }
                             }
-    
+
                             // run the action provided by the client
                             let ret_str = match wasm_run_action(&msg) {
                                 Ok(result) => result,

@@ -19,6 +19,7 @@ wabt        = "0.9"
 serde       = {version = "1.0"}
 serde_derive = {version = "1.0"}
 nan-preserving-float = "0.1.0"
+time = "0.1"
 
 [patch.'https://github.com/apache/teaclave-sgx-sdk.git']
 sgx_types = { path = "../../../sgx_types" }
