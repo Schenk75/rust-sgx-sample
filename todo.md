@@ -266,7 +266,7 @@ Succeed.
 
 2. 性能測試：比較原生的wasmi和sgx-wasmi跑所有test_input的效率
 
-   
+   ![image-20210520140035659](.todo/image-20210520140035659.png)
 
 3. 安全測試：
 

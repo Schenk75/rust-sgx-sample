@@ -848,7 +848,7 @@ fn main() {
         else if mode == "test" {
             let wast_list = vec![
                 "test_input/int_exprs.wast",
-                "test_input/conversions.wast",
+                // "test_input/conversions.wast",
                 "test_input/nop.wast",
                 "test_input/float_memory.wast",
                 "test_input/call.wast",
@@ -878,7 +878,7 @@ fn main() {
                 "test_input/tee_local.wast",
                 "test_input/custom.wast",
                 "test_input/start.wast",
-                "test_input/float_misc.wast",
+                // "test_input/float_misc.wast",
                 "test_input/stack.wast",
                 "test_input/f32_cmp.wast",
                 "test_input/i64.wast",
@@ -892,14 +892,14 @@ fn main() {
                 "test_input/br_table.wast",
                 "test_input/traps.wast",
                 "test_input/return.wast",
-                "test_input/f64.wast",
+                // "test_input/f64.wast",
                 "test_input/type.wast",
                 "test_input/fac.wast",
                 "test_input/set_local.wast",
                 "test_input/func.wast",
-                "test_input/f32.wast",
+                // "test_input/f32.wast",
                 "test_input/f32_bitwise.wast",
-                "test_input/float_exprs.wast",
+                // "test_input/float_exprs.wast",
                 "test_input/linking.wast",
                 "test_input/skip-stack-guard-page.wast",
                 // "test_input/names.wast",
@@ -920,7 +920,9 @@ fn main() {
                 "test_input/data.wast",
                 "test_input/utf8-custom-section-id.wast",
             ];
-            let mut file = fs::OpenOptions::new().append(true).open("data.txt").expect("cannot open file");
+            let file_path = "data10.txt";
+            std::fs::File::create(file_path).unwrap();
+            let mut file = fs::OpenOptions::new().append(true).open(file_path).expect("cannot open file");
             for wfile in wast_list {
                 println!("======================= testing {} =====================", wfile);
                 let start_time = time::get_time();
@@ -944,7 +946,7 @@ fn main() {
                                 }
                     }
                 {
-                    println!("Line : {}", line);
+                    // println!("Line : {}", line);
 
                     match kind {
                         CommandKind::Module { name, module, .. } => {
@@ -956,7 +958,7 @@ fn main() {
                                 }
                             };
                             // the same
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -971,7 +973,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -980,19 +982,19 @@ fn main() {
                             }
                             // the same
 
-                            println!("load module - success at line {}", line)
+                            // println!("load module - success at line {}", line)
                         },
 
                         CommandKind::AssertReturn { action, expected } => {
                             let script = match wasm_run_action(&action) {
                                 Some(res) => res,
                                 None => {
-                                    println!("AssertReturn wasm_run_action fail");
+                                    // println!("AssertReturn wasm_run_action fail");
                                     return;
                                 }
                             };
 
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1007,7 +1009,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1040,7 +1042,7 @@ fn main() {
                                             spec_expected @ _ => assert_eq!(actual_result, spec_expected),
                                         }
                                     }
-                                    println!("assert_return at line {} - success", line);
+                                    // println!("assert_return at line {} - success", line);
                                 },
                                 Err(e) => {
                                     panic!("Expected action to return value, got error: {:?}", e);
@@ -1059,7 +1061,7 @@ fn main() {
                                 }
                             };
 
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1074,7 +1076,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1100,7 +1102,7 @@ fn main() {
                                             }
                                         }
                                     }
-                                    println!("assert_return_nan at line {} - success", line);
+                                    // println!("assert_return_nan at line {} - success", line);
                                 }
                                 Err(e) => {
                                     panic!("Expected action to return value, got error: {:?}", e);
@@ -1117,7 +1119,7 @@ fn main() {
                                 }
                             };
 
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1132,7 +1134,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1145,7 +1147,9 @@ fn main() {
                             let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
                             match result_obj {
                                 Ok(result) => panic!("Expected exhaustion, got result: {:?}", result),
-                                Err(e) => println!("assert_exhaustion at line {} - success ({:?})", line, e),
+                                Err(e) => {
+                                    // println!("assert_exhaustion at line {} - success ({:?})", line, e);
+                                },
                             }
                         },
 
@@ -1158,7 +1162,7 @@ fn main() {
                                 }
                             };
 
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1173,7 +1177,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1189,7 +1193,7 @@ fn main() {
                                     panic!("Expected action to result in a trap, got result: {:?}", result);
                                 },
                                 Err(e) => {
-                                    println!("assert_trap at line {} - success ({:?})", line, e);
+                                    // println!("assert_trap at line {} - success ({:?})", line, e);
                                 },
                             }
                         },
@@ -1205,7 +1209,7 @@ fn main() {
                                     return;
                                 }
                             };
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1220,7 +1224,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1233,7 +1237,10 @@ fn main() {
 
                             match result_obj {
                                 Ok(_) => panic!("Expected invalid module definition, got some module!"),
-                                Err(e) => println!("assert_invalid at line {} - success ({:?})", line, e),
+                                Err(e) => {
+                                    // println!("assert_invalid at line {} - success ({:?})", line, e);
+                                },
+                                
                             }
                         },
 
@@ -1245,7 +1252,7 @@ fn main() {
                                     return;
                                 }
                             };
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1260,7 +1267,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1273,7 +1280,9 @@ fn main() {
                             
                             match result_obj {
                                 Ok(_) => panic!("Expected error running start function at line {}", line),
-                                Err(e) => println!("assert_uninstantiable - success ({:?})", e),
+                                Err(e) => {
+                                    // println!("assert_uninstantiable - success ({:?})", e);
+                                },
                             }
                         },
 
@@ -1285,7 +1294,7 @@ fn main() {
                                     return;
                                 }
                             };
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1300,7 +1309,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1312,7 +1321,9 @@ fn main() {
                             let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
 
                             match result_obj {
-                                Ok(_) => {println!("register - success at line {}", line)},
+                                Ok(_) => {
+                                    // println!("register - success at line {}", line)
+                                },
                                 Err(e) => panic!("No such module, at line {} - ({:?})", e, line),
                             }
                         },
@@ -1326,7 +1337,7 @@ fn main() {
                                 }
                             };
 
-                            println!("script to enclave: {}", script);
+                            // println!("script to enclave: {}", script);
                             match tls.write_all(script.as_bytes()) {
                                 Ok(_) => {},
                                 Err(x) => {
@@ -1341,7 +1352,7 @@ fn main() {
                                     for ch in plaintext.iter() {
                                         if *ch != 0x00 {res_str.push(*ch as char);}
                                     }
-                                    println!("Server replied: {}", &res_str);
+                                    // println!("Server replied: {}", &res_str);
                                 }
                                 Err(ref err) if err.kind() == io::ErrorKind::ConnectionAborted => {
                                     println!("EOF (tls)");
@@ -1354,7 +1365,9 @@ fn main() {
                             let result_obj: Result<Option<RuntimeValue>, InterpreterError> = answer_convert(result);
                             
                             match result_obj {
-                                Ok(_) => {println!("invoke - success at line {}", line)},
+                                Ok(_) => {
+                                    // println!("invoke - success at line {}", line)
+                                },
                                 Err(e) => panic!("Failed to invoke action at line {}: {:?}", line, e),
                             }
                         },
