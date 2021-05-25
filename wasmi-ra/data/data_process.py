@@ -20,7 +20,7 @@ if __name__ == "__main__":
         data_list = f.readlines()
         for data in data_list:
             tmp = data.strip().split(": ")
-            tmp[1] = math.log(int(tmp[1])/1000)
+            tmp[1] = math.log(int(tmp[1])/10000) ** 0.5
             result.append(tmp)
     print(result)
 
@@ -28,5 +28,5 @@ if __name__ == "__main__":
         data_list = f.readlines()
         for i, data in enumerate(data_list):
             tmp = data.strip().split(": ")
-            result[i].append(math.log(int(tmp[1])/1000))
+            result[i].append(math.log(int(tmp[1])/10000) ** 0.5)
     print(result)
