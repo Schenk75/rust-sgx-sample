@@ -331,8 +331,8 @@ pub fn create_attestation_report(pub_k: &sgx_ec256_public_t, sign_type: sgx_quot
         return Err(res);
     }
 
-    if rt != sgx_status_t::SGX_SUCCESS {
-        return Err(rt);
+    if retval != sgx_status_t::SGX_SUCCESS {
+        return Err(retval);
     }
 
     //println!("Got ias_sock = {}", ias_sock);
