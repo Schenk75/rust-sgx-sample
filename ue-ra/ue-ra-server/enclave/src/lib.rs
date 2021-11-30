@@ -207,7 +207,7 @@ pub fn get_sigrl_from_intel(fd : c_int, gid : u32) -> Vec<u8> {
     let config = make_ias_client_config();
     let ias_key = get_ias_api_key();
 
-let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Key: {}\r\nConnection: Close\r\n\r\n",
+    let req = format!("GET {}{:08x} HTTP/1.1\r\nHOST: {}\r\nOcp-Apim-Subscription-Key: {}\r\nConnection: Close\r\n\r\n",
                         SIGRL_SUFFIX,
                         gid,
                         DEV_HOSTNAME,
